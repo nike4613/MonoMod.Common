@@ -17,39 +17,39 @@ namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
         // we use ;# for comments in assembly to be slightly more portable across assemblers
 
         /**** this pointer context thunk assembly ****\
-        pop r10 ;# r10 isn't used to pass arguments on Windows; it now contains the return position
+pop r10 ;# r10 isn't used to pass arguments on Windows; it now contains the return position
 
-        ;# save register-passed arguments
-        push rcx
-        push rdx
-        push r8
-        push r9
+;# save register-passed arguments
+push rcx
+push rdx
+push r8
+push r9
 
-        ;# setup call
-        ;# the methods being called here have no strangeness, only user args passed in register
+;# setup call
+;# the methods being called here have no strangeness, only user args passed in register
 
-        ;# first arg is the this ptr
+;# first arg is the this ptr
 
-        ;# the third arg is the source start
-        mov r8, r10 ;# r8 is the argument we want it in
-        xor rdx, rdx
-        mov dx, [r10 + 12] ;# offset of the call insn length
-        sub r8, rdx
+;# the third arg is the source start
+mov r8, r10 ;# r8 is the argument we want it in
+xor rdx, rdx
+mov dx, [r10 + 12] ;# offset of the call insn length
+sub r8, rdx
 
-        ;# the second arg is the index
-        xor rdx, rdx
-        mov edx, [r10 + 8] ;# offset of the index
+;# the second arg is the index
+xor rdx, rdx
+mov edx, [r10 + 8] ;# offset of the index
 
-        ;# finally call handler
-        call [r10]
+;# finally call handler
+call [r10]
 
-        ;# rax now contains our target method, but we need to re-load our arguments
-        pop r9
-        pop r8
-        pop rdx
-        pop rcx
+;# rax now contains our target method, but we need to re-load our arguments
+pop r9
+pop r8
+pop rdx
+pop rcx
 
-        ;# we're finally ready to call our target
+;# we're finally ready to call our target
         jmp rax
         */
         private static readonly byte[] ThisPtrThunk = { 
@@ -72,45 +72,45 @@ namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
             0xFF, 0xE0                      // jmp rax
         };
 
-        /**** instance no return buffer generic cookie/static return buffer generic cookie ****
-        ;#   the position of the generic cookie is the same when there is a this pointer and no return buffer as if there is 
-        ;# no this pointer and a return buffer
+        /**** instance no return buffer generic cookie/static return buffer generic cookie ****\
+;#   the position of the generic cookie is the same when there is a this pointer and no return buffer as if there is 
+;# no this pointer and a return buffer
 
-        pop r10 ;# get the return address for where we're calling from
+pop r10 ;# get the return address for where we're calling from
         
-        ;# save register-passed arguments
-        push rcx
-        push rdx
-        push r8
-        push r9
+;# save register-passed arguments
+push rcx
+push rdx
+push r8
+push r9
 
-        ;# setup call
-        ;# the methods being called here have no strangeness, only user args passed in register
+;# setup call
+;# the methods being called here have no strangeness, only user args passed in register
 
-        ;# first arg is the generic cookie, which is in rdx
-        mov rcx, rdx
+;# first arg is the generic cookie, which is in rdx
+mov rcx, rdx
 
-        ;# the third arg is the source start
-        mov r8, r10 ;# r8 is the argument we want it in
-        xor rdx, rdx
-        mov dx, [r10 + 12] ;# offset of the call insn length
-        sub r8, rdx
+;# the third arg is the source start
+mov r8, r10 ;# r8 is the argument we want it in
+xor rdx, rdx
+mov dx, [r10 + 12] ;# offset of the call insn length
+sub r8, rdx
 
-        ;# the second arg is the index
-        xor rdx, rdx
-        mov edx, [r10 + 8] ;# offset of the index
+;# the second arg is the index
+xor rdx, rdx
+mov edx, [r10 + 8] ;# offset of the index
 
-        ;# finally call handler
-        call [r10]
+;# finally call handler
+call [r10]
 
-        ;# rax now contains our target method, but we need to re-load our arguments
-        pop r9
-        pop r8
-        pop rdx
-        pop rcx
+;# rax now contains our target method, but we need to re-load our arguments
+pop r9
+pop r8
+pop rdx
+pop rcx
 
-        ;# we're finally ready to call our target
-        jmp rax
+;# we're finally ready to call our target
+jmp rax
         */
         private static readonly byte[] ThisPtrNoBufThunk = {
             0x41, 0x5A,                     // pop r10
@@ -135,42 +135,42 @@ namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
         // ^^^ the above is also used when there is no this pointer but there is a return buffer
 
 
-        /**** instance return buffer generic cookiee ****
-        pop r10 ;# get the return address for where we're calling from
+        /**** instance return buffer generic cookiee ****\
+pop r10 ;# get the return address for where we're calling from
         
-        ;# save register-passed arguments
-        push rcx
-        push rdx
-        push r8
-        push r9
+;# save register-passed arguments
+push rcx
+push rdx
+push r8
+push r9
 
-        ;# setup call
-        ;# the methods being called here have no strangeness, only user args passed in register
+;# setup call
+;# the methods being called here have no strangeness, only user args passed in register
 
-        ;# first arg is the generic cookie, which is in rdx
-        mov rcx, r8
+;# first arg is the generic cookie, which is in rdx
+mov rcx, r8
 
-        ;# the third arg is the source start
-        mov r8, r10 ;# r8 is the argument we want it in
-        xor rdx, rdx
-        mov dx, [r10 + 12] ;# offset of the call insn length
-        sub r8, rdx
+;# the third arg is the source start
+mov r8, r10 ;# r8 is the argument we want it in
+xor rdx, rdx
+mov dx, [r10 + 12] ;# offset of the call insn length
+sub r8, rdx
 
-        ;# the second arg is the index
-        xor rdx, rdx
-        mov edx, [r10 + 8] ;# offset of the index
+;# the second arg is the index
+xor rdx, rdx
+mov edx, [r10 + 8] ;# offset of the index
 
-        ;# finally call handler
-        call [r10]
+;# finally call handler
+call [r10]
 
-        ;# rax now contains our target method, but we need to re-load our arguments
-        pop r9
-        pop r8
-        pop rdx
-        pop rcx
+;# rax now contains our target method, but we need to re-load our arguments
+pop r9
+pop r8
+pop rdx
+pop rcx
 
-        ;# we're finally ready to call our target
-        jmp rax
+;# we're finally ready to call our target
+jmp rax
         */
         private static readonly byte[] ThisPtrBufThunk = {
             0x41, 0x5A,                     // pop r10
