@@ -1,6 +1,8 @@
-﻿using System;
+﻿using MonoMod.RuntimeDetour;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 
 namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
@@ -16,6 +18,7 @@ namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
 
         // we use ;# for comments in assembly to be slightly more portable across assemblers
 
+        #region ThisPtr context thunk
         /**** this pointer context thunk assembly ****\
 pop r10 ;# r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -52,7 +55,7 @@ pop rcx
 ;# we're finally ready to call our target
         jmp rax
         */
-        private static readonly byte[] ThisPtrThunk = { 
+        private static readonly byte[] ThisPtrThunk = {
             0x41, 0x5A,                     // pop r10
             0x51,                           // push rcx
             0x52,                           // push rdx
@@ -71,7 +74,19 @@ pop rcx
             0x59,                           // pop rcx
             0xFF, 0xE0                      // jmp rax
         };
+        #endregion
 
+        private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
+            try {
+                // this will only be called from ThisPtrThunk
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        #region InstNoBuf context/StaticBuf context
         /**** instance no return buffer generic cookie/static return buffer generic cookie ****\
 ;#   the position of the generic cookie is the same when there is a this pointer and no return buffer as if there is 
 ;# no this pointer and a return buffer
@@ -133,8 +148,9 @@ jmp rax
             0xFF, 0xE0                      // jmp rax
         };
         // ^^^ the above is also used when there is no this pointer but there is a return buffer
+        #endregion
 
-
+        #region InstBuf context
         /**** instance return buffer generic cookiee ****\
 pop r10 ;# get the return address for where we're calling from
         
@@ -192,5 +208,37 @@ jmp rax
             0x59,                           // pop rcx
             0xFF, 0xE0                      // jmp rax
         };
+        #endregion
+
+        private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
+            try {
+                // methodDesc contains the MethodDesc* for the current method
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
+            try {
+                // methodTable contains the MethodTable* (the type) the current method is on
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        private static IntPtr patchResolveFailureTarget = IntPtr.Zero;
+        private static IntPtr PatchResolveFailureTarget
+            => patchResolveFailureTarget != IntPtr.Zero
+                    ? patchResolveFailureTarget
+                    : (patchResolveFailureTarget = typeof(GenericDetourCoreCLRWinX64)
+                        .GetMethod(nameof(FailedToResolvePatchTarget), BindingFlags.NonPublic | BindingFlags.Static).GetNativeStart());
+
+        private static void FailedToResolvePatchTarget() {
+            throw new Exception("Could not resolve patch target; see mmdbg for more information");
+        }
     }
 }

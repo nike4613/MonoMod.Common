@@ -202,16 +202,16 @@ namespace MonoMod.RuntimeDetour.Platforms {
         protected delegate object d_CreateRuntimeMethodInfoStub(IntPtr methodHandle, object loaderAllocator);
         protected delegate RuntimeMethodHandle d_CreateRuntimeMethodHandle(object runtimeMethodInfo);
         protected delegate Type d_GetDeclaringTypeOfMethodHandle(IntPtr methodHandle);
-        protected delegate Type d_GetTypeFromNativeHandle(IntPtr handle);
+        public delegate Type d_GetTypeFromNativeHandle(IntPtr handle);
 
-        protected RuntimeMethodHandle CreateHandleForHandlePointer(IntPtr handle)
+        public RuntimeMethodHandle CreateHandleForHandlePointer(IntPtr handle)
             => CreateRuntimeMethodHandle(CreateRuntimeMethodInfoStub(handle, MethodHandle_GetLoaderAllocator(handle)));
 
         protected d_MethodHandle_GetLoaderAllocator MethodHandle_GetLoaderAllocator;
         protected d_CreateRuntimeMethodInfoStub CreateRuntimeMethodInfoStub;
         protected d_CreateRuntimeMethodHandle CreateRuntimeMethodHandle;
         protected d_GetDeclaringTypeOfMethodHandle GetDeclaringTypeOfMethodHandle;
-        protected d_GetTypeFromNativeHandle GetTypeFromNativeHandle;
+        public d_GetTypeFromNativeHandle GetTypeFromNativeHandle;
 
         protected virtual void SetupJitHookHelpers() {
             Type Unsafe = typeof(object).Assembly.GetType("Internal.Runtime.CompilerServices.Unsafe");
