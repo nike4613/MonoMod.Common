@@ -178,16 +178,6 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
          */
         #endregion
 
-        private static GenericDetourCoreCLR Instance;
-
-        // we currently use stuff from this type, and this should only be running when this is the current anyway
-        private readonly DetourRuntimeNETCore30Platform netPlatform;
-
-        protected GenericDetourCoreCLR() {
-            Instance = this;
-            netPlatform = (DetourRuntimeNETCore30Platform) DetourHelper.Runtime;
-        }
-
         #region Thunk Jump Targets
         private static MethodBase GetMethodOnSelf(string name)
             => typeof(GenericDetourCoreCLR)
@@ -265,6 +255,39 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
         #endregion
 
+        private static GenericDetourCoreCLR Instance;
+
+        // we currently use stuff from this type, and this should only be running when this is the current anyway
+        private readonly DetourRuntimeNETCore30Platform netPlatform;
+
+        protected GenericDetourCoreCLR() {
+            Instance = this;
+            netPlatform = (DetourRuntimeNETCore30Platform) DetourHelper.Runtime;
+            netPlatform.OnMethodCompiled += OnMethodCompiled;
+        }
+
+        private void OnMethodCompiled(MethodBase method, IntPtr codeStart, ulong codeSize) {
+            if (!method.IsGenericMethod && !method.DeclaringType.IsGenericType)
+                return; // the method is not generic at all
+
+            if (method is MethodInfo minfo && minfo.IsGenericMethod) {
+                method = minfo.GetGenericMethodDefinition();
+            }
+            if (method.DeclaringType.IsGenericType) {
+                method = MethodBase.GetMethodFromHandle(method.MethodHandle, method.DeclaringType.GetGenericTypeDefinition().TypeHandle); ;
+            }
+
+            int index;
+            lock (genericPatchesLockObject) {
+                if (!patchedMethodIndexes.TryGetValue(method, out index))
+                    return; // we have no patches for this registered
+            }
+
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            // TODO: prepare/apply patch
+        }
+
         protected struct InstantiationPatch {
             public readonly MethodBase SourceInstantiation;
             public readonly NativeDetourData OriginalData;
@@ -288,14 +311,24 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private readonly object genericPatchesLockObject = new object();
         private readonly List<GenericPatchInfo> genericPatches = new List<GenericPatchInfo>();
+        private readonly Dictionary<MethodBase, int> patchedMethodIndexes = new Dictionary<MethodBase, int>();
 
-        #region Real Target Locators
+        protected int AddMethodPatch(MethodBase from, MethodBase to) {
+            lock (genericPatchesLockObject) {
+                int index = patchedMethodIndexes.Count;
+                genericPatches.Add(new GenericPatchInfo(from, to));
+                patchedMethodIndexes.Add(from, index);
+                return index;
+            }
+        }
+
         protected GenericPatchInfo GetPatchInfoFromIndex(int index) {
             lock (genericPatchesLockObject) {
                 return genericPatches[index];
             }
         }
 
+        #region Real Target Locators
         protected IntPtr FindTargetForThisPtrContext(object thisptr, int index) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
