@@ -1,5 +1,4 @@
-﻿using MonoMod.RuntimeDetour;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -75,16 +74,6 @@ pop rcx
             0xFF, 0xE0                      // jmp rax
         };
         #endregion
-
-        private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
-            try {
-                // this will only be called from ThisPtrThunk
-                throw new NotImplementedException();
-            } catch (Exception e) {
-                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
-                return PatchResolveFailureTarget;
-            }
-        }
 
         #region InstNoBuf context/StaticBuf context
         /**** instance no return buffer generic cookie/static return buffer generic cookie ****\
@@ -209,36 +198,5 @@ jmp rax
             0xFF, 0xE0                      // jmp rax
         };
         #endregion
-
-        private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
-            try {
-                // methodDesc contains the MethodDesc* for the current method
-                throw new NotImplementedException();
-            } catch (Exception e) {
-                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
-                return PatchResolveFailureTarget;
-            }
-        }
-
-        private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
-            try {
-                // methodTable contains the MethodTable* (the type) the current method is on
-                throw new NotImplementedException();
-            } catch (Exception e) {
-                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
-                return PatchResolveFailureTarget;
-            }
-        }
-
-        private static IntPtr patchResolveFailureTarget = IntPtr.Zero;
-        private static IntPtr PatchResolveFailureTarget
-            => patchResolveFailureTarget != IntPtr.Zero
-                    ? patchResolveFailureTarget
-                    : (patchResolveFailureTarget = typeof(GenericDetourCoreCLRWinX64)
-                        .GetMethod(nameof(FailedToResolvePatchTarget), BindingFlags.NonPublic | BindingFlags.Static).GetNativeStart());
-
-        private static void FailedToResolvePatchTarget() {
-            throw new Exception("Could not resolve patch target; see mmdbg for more information");
-        }
     }
 }

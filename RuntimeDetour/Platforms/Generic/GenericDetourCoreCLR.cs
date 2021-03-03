@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MonoMod.RuntimeDetour;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -57,6 +58,7 @@ namespace MonoMod.Common.RuntimeDetour.Platforms {
         // src/coreclr/src/vm/method.cpp line 1685
         // ^^^ is the start of the logic for determining what kind of generic cookie to use
 
+        #region Method property tests
         protected static bool RequiresMethodTableArg(MethodBase method) {
             /*
             return
@@ -173,5 +175,69 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         /*
         MT->IsSharedByGenericInstantiations() is whether or not this is the canonical instance
          */
+        #endregion
+
+        #region Thunk Jump Targets
+        private static MethodBase GetMethodOnSelf(string name)
+            => typeof(GenericDetourCoreCLR)
+                        .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
+        private static IntPtr FixupForThisPtrContext
+            => fixupForThisPtrCtx != IntPtr.Zero
+                    ? fixupForThisPtrCtx
+                    : (fixupForThisPtrCtx = GetMethodOnSelf(nameof(FindAndFixupThunkForThisPtrContext)).GetNativeStart());
+
+        private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
+            try {
+                // this will only be called from ThisPtrThunk
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        private static IntPtr fixupForMethodDescContext = IntPtr.Zero;
+        private static IntPtr FixupForMethodDescContext
+            => fixupForMethodDescContext != IntPtr.Zero
+                    ? fixupForMethodDescContext
+                    : (fixupForMethodDescContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodDescContext)).GetNativeStart());
+
+        private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
+            try {
+                // methodDesc contains the MethodDesc* for the current method
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        private static IntPtr fixupForMethodTableContext = IntPtr.Zero;
+        private static IntPtr FixupForMethodTableContext
+            => fixupForMethodTableContext != IntPtr.Zero
+                    ? fixupForMethodTableContext
+                    : (fixupForMethodTableContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodTableContext)).GetNativeStart());
+
+        private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
+            try {
+                // methodTable contains the MethodTable* (the type) the current method is on
+                throw new NotImplementedException();
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
+        private static IntPtr patchResolveFailureTarget = IntPtr.Zero;
+        private static IntPtr PatchResolveFailureTarget
+            => patchResolveFailureTarget != IntPtr.Zero
+                    ? patchResolveFailureTarget
+                    : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
+        private static void FailedToResolvePatchTarget() {
+            throw new Exception("Could not resolve patch target; see mmdbg for more information");
+        }
+        #endregion
     }
 }
