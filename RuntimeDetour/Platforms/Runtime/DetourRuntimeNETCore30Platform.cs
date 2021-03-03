@@ -119,7 +119,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         [StructLayout(LayoutKind.Sequential)]
         private unsafe struct CORINFO_METHOD_INFO {
-            public IntPtr ftn;   // CORINFO_METHOD_HANDLE
+            public IntPtr ftn;   // MethodDesc*
             public IntPtr scope; // CORINFO_MODULE_HANDLE
             public byte* ILCode;
             public uint ILCodeSize;
