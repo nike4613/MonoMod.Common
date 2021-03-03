@@ -1,4 +1,5 @@
 ﻿using MonoMod.RuntimeDetour;
+using MonoMod.RuntimeDetour.Platforms;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -99,7 +100,7 @@ namespace MonoMod.Common.RuntimeDetour.Platforms {
                 MethodIsGenericShared(method) &&
                 !method.IsStatic &&
                 !method.DeclaringType.IsValueType &&
-                !(method.DeclaringType.IsInterface || method.IsAbstract);
+                !(method.DeclaringType.IsInterface && !method.IsAbstract);
         }
 
         protected static readonly Type CanonClass = Type.GetType("System.__Canon");
@@ -179,8 +180,13 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static GenericDetourCoreCLR Instance;
 
-        protected GenericDetourCoreCLR()
-            => Instance = this;
+        // we currently use stuff from this type, and this should only be running when this is the current anyway
+        private readonly DetourRuntimeNETCore30Platform netPlatform;
+
+        protected GenericDetourCoreCLR() {
+            Instance = this;
+            netPlatform = (DetourRuntimeNETCore30Platform) DetourHelper.Runtime;
+        }
 
         #region Thunk Jump Targets
         private static MethodBase GetMethodOnSelf(string name)
@@ -259,14 +265,95 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
         #endregion
 
+        protected struct InstantiationPatch {
+            public readonly MethodBase SourceInstantiation;
+            public readonly NativeDetourData OriginalData;
+
+            public InstantiationPatch(MethodBase source, NativeDetourData origData) {
+                SourceInstantiation = source;
+                OriginalData = origData;
+            }
+        }
+
+        protected class GenericPatchInfo {
+            public readonly MethodBase SourceMethod;
+            public readonly MethodBase TargetMethod;
+            public readonly List<InstantiationPatch> PatchedInstantiations = new List<InstantiationPatch>();
+
+            public GenericPatchInfo(MethodBase source, MethodBase target) {
+                SourceMethod = source;
+                TargetMethod = target;
+            }
+        }
+
+        private readonly object genericPatchesLockObject = new object();
+        private readonly List<GenericPatchInfo> genericPatches = new List<GenericPatchInfo>();
+
         #region Real Target Locators
+        protected GenericPatchInfo GetPatchInfoFromIndex(int index) {
+            lock (genericPatchesLockObject) {
+                return genericPatches[index];
+            }
+        }
+
         protected IntPtr FindTargetForThisPtrContext(object thisptr, int index) {
-            throw new NotImplementedException();
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            MethodBase origSrc = patchInfo.SourceMethod;
+            Type origType = origSrc.DeclaringType;
+            Type realType = thisptr.GetType();
+
+            if (origType.IsInterface) {
+                realType = realType.GetInterfaces()
+                    .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == origType)
+                    .First();
+            } else {
+                while (realType.GetGenericTypeDefinition() != origType) {
+                    realType = realType.BaseType;
+                }
+            }
+
+            // find the actual method impl using this whacky type handle workaround
+
+            RuntimeMethodHandle origHandle = origSrc.MethodHandle;
+            RuntimeTypeHandle realTypeHandle = realType.TypeHandle;
+
+            MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
+
+            return GetRealTarget(realMethod, patchInfo.TargetMethod);
         }
+
         protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index) {
-            throw new NotImplementedException();
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            MethodBase origSrc = patchInfo.SourceMethod;
+
+            RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
+
+            MethodBase realMethod = MethodBase.GetMethodFromHandle(handle);
+
+            return GetRealTarget(realMethod, patchInfo.TargetMethod);
         }
+
         protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            MethodBase origSrc = patchInfo.SourceMethod;
+
+            Type realType = netPlatform.GetTypeFromNativeHandle(methodTable);
+
+            // find the actual method impl using this whacky type handle workaround
+
+            RuntimeMethodHandle origHandle = origSrc.MethodHandle;
+            RuntimeTypeHandle realTypeHandle = realType.TypeHandle;
+
+            MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
+
+            return GetRealTarget(realMethod, patchInfo.TargetMethod);
+        }
+
+        protected IntPtr GetRealTarget(MethodBase realSrc, MethodBase origTarget) {
+
             throw new NotImplementedException();
         }
         #endregion
