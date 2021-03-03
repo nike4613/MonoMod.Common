@@ -177,10 +177,23 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
          */
         #endregion
 
+        private static GenericDetourCoreCLR Instance;
+
+        protected GenericDetourCoreCLR()
+            => Instance = this;
+
         #region Thunk Jump Targets
         private static MethodBase GetMethodOnSelf(string name)
             => typeof(GenericDetourCoreCLR)
                         .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static void BackpatchJump(IntPtr source, IntPtr target) {
+            IDetourNativePlatform platform = DetourHelper.Native;
+            NativeDetourData data = platform.Create(source, target);
+            platform.MakeWritable(data);
+            platform.Apply(data); // we just write a standard jump at this point
+            platform.MakeExecutable(data);
+        }
 
         private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
         private static IntPtr FixupForThisPtrContext
@@ -191,7 +204,9 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
             try {
                 // this will only be called from ThisPtrThunk
-                throw new NotImplementedException();
+                IntPtr target = Instance.FindTargetForThisPtrContext(thisptr, index);
+                BackpatchJump(origStart, target);
+                return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
                 return PatchResolveFailureTarget;
@@ -207,7 +222,9 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
             try {
                 // methodDesc contains the MethodDesc* for the current method
-                throw new NotImplementedException();
+                IntPtr target = Instance.FindTargetForMethodDescContext(methodDesc, index);
+                BackpatchJump(origStart, target);
+                return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
                 return PatchResolveFailureTarget;
@@ -223,7 +240,9 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
             try {
                 // methodTable contains the MethodTable* (the type) the current method is on
-                throw new NotImplementedException();
+                IntPtr target = Instance.FindTargetForMethodTableContext(methodTable, index);
+                BackpatchJump(origStart, target);
+                return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
                 return PatchResolveFailureTarget;
@@ -237,6 +256,18 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
         private static void FailedToResolvePatchTarget() {
             throw new Exception("Could not resolve patch target; see mmdbg for more information");
+        }
+        #endregion
+
+        #region Real Target Locators
+        protected IntPtr FindTargetForThisPtrContext(object thisptr, int index) {
+            throw new NotImplementedException();
+        }
+        protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index) {
+            throw new NotImplementedException();
+        }
+        protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index) {
+            throw new NotImplementedException();
         }
         #endregion
     }
