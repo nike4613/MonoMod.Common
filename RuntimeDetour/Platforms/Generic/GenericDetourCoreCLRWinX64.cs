@@ -276,7 +276,7 @@ jmp rax
         private static unsafe void Copy(IntPtr from, IntPtr to, uint length)
             => Copy((byte*) from, (byte*) to, length);
 
-        private enum CallType {
+        private enum CallType : byte {
             Rel32,
             Abs64
         }
@@ -291,12 +291,82 @@ jmp rax
                 : CallType.Abs64;
         }
 
-        protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart) {
+        private static uint GetCallTypeSize(CallType type)
+            => type == CallType.Rel32
+                ? 5u // call insn
+                + 8u // handler method
+                + 4u // index
+                + 2u // call insn size
+                // or
+                : 6u // call insn
+                + 8u // handler method
+                + 4u // index
+                + 2u // call insn size
+                + 8u; // call abs address
+
+        private IntPtr GetThunkForMethod(MethodBase instance) {
             throw new NotImplementedException();
         }
 
-        protected override void UnpatchInstantiation(InstantiationPatch instantiation) {
+        private IntPtr GetHandlerForMethod(MethodBase instance) {
             throw new NotImplementedException();
+        }
+
+        protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
+            IntPtr thunk = GetThunkForMethod(methodInstance);
+            IntPtr handler = GetHandlerForMethod(methodInstance);
+            CallType callType = FindCallType(codeStart, thunk);
+            uint callLen = GetCallTypeSize(callType);
+
+            // backup the original data
+            IntPtr dataBackup = DetourHelper.Native.MemAlloc(callLen);
+            Copy(codeStart, dataBackup, callLen);
+
+            NativeDetourData detourData = new NativeDetourData {
+                Method = codeStart,
+                Target = thunk,
+                Type = (byte)callType,
+                Size = callLen,
+                Extra = dataBackup
+            };
+
+            DetourHelper.Native.MakeWritable(detourData);
+
+            int idx = 0;
+            if (callType == CallType.Rel32) {
+                codeStart.Write(ref idx, (byte) 0xE8);
+                codeStart.Write(ref idx, (uint) ((ulong) codeStart - (ulong) thunk));
+            } else {
+                codeStart.Write(ref idx, (byte) 0xFF);
+                codeStart.Write(ref idx, (byte) 0x15);
+                codeStart.Write(ref idx, (uint) (8 + 4 + 2)); // offset from end of instruction to end of other data for real address
+            }
+            codeStart.Write(ref idx, (ulong) handler);
+            codeStart.Write(ref idx, (uint) index);
+            if (callType == CallType.Rel32) {
+                codeStart.Write(ref idx, (ushort) 5); // the rel32 call is 5 bytes
+            } else {
+                codeStart.Write(ref idx, (ushort) 6); // the abs64 call is 6 bytes
+                codeStart.Write(ref idx, (ulong) thunk); // and needs the thunk's absolute address here
+            }
+
+            DetourHelper.Native.MakeExecutable(detourData);
+            DetourHelper.Native.FlushICache(detourData);
+
+            return detourData;
+        }
+
+        protected override void UnpatchInstantiation(InstantiationPatch instantiation) {
+            NativeDetourData data = instantiation.OriginalData;
+
+            // restore original code
+            DetourHelper.Native.MakeWritable(data);
+            Copy(data.Extra, data.Method, data.Size);
+            DetourHelper.Native.MakeExecutable(data);
+            DetourHelper.Native.FlushICache(data);
+
+            // be sure to free the associated memory
+            DetourHelper.Native.MemFree(data.Extra);
         }
     }
 }

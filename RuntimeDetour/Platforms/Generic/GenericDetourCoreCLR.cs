@@ -285,11 +285,11 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             }
 
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
-            CreatePatchInstance(patchInfo, methodDecl, method, codeStart);
+            CreatePatchInstance(patchInfo, methodDecl, method, codeStart, index);
         }
 
-        private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart) {
-            NativeDetourData detourData = PatchInstantiation(decl, instance, codeStart);
+        private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart, int index) {
+            NativeDetourData detourData = PatchInstantiation(decl, instance, codeStart, index);
             InstantiationPatch patch = new InstantiationPatch(instance, detourData);
             InstantiationPatch? existing = null;
             lock (patchInfo) {
@@ -306,7 +306,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
 
-        protected abstract NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart);
+        protected abstract NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index);
         protected abstract void UnpatchInstantiation(InstantiationPatch instantiation);
 
         protected struct InstantiationPatch {
