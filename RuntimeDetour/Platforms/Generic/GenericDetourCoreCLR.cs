@@ -270,11 +270,12 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             if (!method.IsGenericMethod && !method.DeclaringType.IsGenericType)
                 return; // the method is not generic at all
 
-            if (method is MethodInfo minfo && minfo.IsGenericMethod) {
-                method = minfo.GetGenericMethodDefinition();
+            MethodBase methodDecl = method;
+            if (methodDecl is MethodInfo minfo && minfo.IsGenericMethod) {
+                methodDecl = minfo.GetGenericMethodDefinition();
             }
-            if (method.DeclaringType.IsGenericType) {
-                method = MethodBase.GetMethodFromHandle(method.MethodHandle, method.DeclaringType.GetGenericTypeDefinition().TypeHandle); ;
+            if (methodDecl.DeclaringType.IsGenericType) {
+                methodDecl = MethodBase.GetMethodFromHandle(methodDecl.MethodHandle, methodDecl.DeclaringType.GetGenericTypeDefinition().TypeHandle); ;
             }
 
             int index;
@@ -284,9 +285,29 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             }
 
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
-
-            // TODO: prepare/apply patch
+            CreatePatchInstance(patchInfo, methodDecl, method, codeStart);
         }
+
+        private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart) {
+            NativeDetourData detourData = PatchInstantiation(decl, instance, codeStart);
+            InstantiationPatch patch = new InstantiationPatch(instance, detourData);
+            InstantiationPatch? existing = null;
+            lock (patchInfo) {
+                if (patchInfo.PatchedInstantiations.TryGetValue(instance, out InstantiationPatch existingnn)) {
+                    existing = existingnn;
+                    patchInfo.PatchedInstantiations[instance] = patch;
+                } else {
+                    patchInfo.PatchedInstantiations.Add(instance, patch);
+                }
+            }
+            if (existing != null) {
+                UnpatchInstantiation(existing.Value); // specifically do it *outside* the lock
+            }
+        }
+
+
+        protected abstract NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart);
+        protected abstract void UnpatchInstantiation(InstantiationPatch instantiation);
 
         protected struct InstantiationPatch {
             public readonly MethodBase SourceInstantiation;
@@ -301,7 +322,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         protected class GenericPatchInfo {
             public readonly MethodBase SourceMethod;
             public readonly MethodBase TargetMethod;
-            public readonly List<InstantiationPatch> PatchedInstantiations = new List<InstantiationPatch>();
+            public readonly Dictionary<MethodBase, InstantiationPatch> PatchedInstantiations = new Dictionary<MethodBase, InstantiationPatch>();
 
             public GenericPatchInfo(MethodBase source, MethodBase target) {
                 SourceMethod = source;
@@ -311,13 +332,29 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private readonly object genericPatchesLockObject = new object();
         private readonly List<GenericPatchInfo> genericPatches = new List<GenericPatchInfo>();
+        private int lastCleared = 0;
         private readonly Dictionary<MethodBase, int> patchedMethodIndexes = new Dictionary<MethodBase, int>();
 
+        int IGenericDetourPlatform.AddPatch(MethodBase from, MethodBase to)
+            => AddMethodPatch(from, to);
+
         protected int AddMethodPatch(MethodBase from, MethodBase to) {
+            // TODO: allow multi-patching, whether here or somewhere else
             lock (genericPatchesLockObject) {
-                int index = patchedMethodIndexes.Count;
-                genericPatches.Add(new GenericPatchInfo(from, to));
+                int index = lastCleared;
+                GenericPatchInfo patchInfo = new GenericPatchInfo(from, to);
+                if (index >= genericPatches.Count) {
+                    genericPatches.Add(patchInfo);
+                } else {
+                    genericPatches[index] = patchInfo;
+                }
                 patchedMethodIndexes.Add(from, index);
+
+                // find the next empty space and update lastCleared, if there is one
+                do {
+                    lastCleared++;
+                } while (lastCleared < genericPatches.Count && genericPatches[lastCleared] == null);
+
                 return index;
             }
         }
@@ -325,6 +362,26 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         protected GenericPatchInfo GetPatchInfoFromIndex(int index) {
             lock (genericPatchesLockObject) {
                 return genericPatches[index];
+            }
+        }
+
+        void IGenericDetourPlatform.RemovePatch(int handle)
+            => RemoveMethodPatch(handle);
+
+        protected void RemoveMethodPatch(int index) {
+            GenericPatchInfo patchInfo;
+            lock (genericPatchesLockObject) {
+                if (index < 0 || index >= genericPatches.Count || genericPatches[index] == null)
+                    throw new ArgumentException("Invalid patch handle", nameof(index));
+
+                patchInfo = genericPatches[index];
+                genericPatches[index] = null;
+                lastCleared = Math.Min(lastCleared, index);
+                patchedMethodIndexes.Remove(patchInfo.SourceMethod);
+            }
+
+            foreach (KeyValuePair<MethodBase, InstantiationPatch> instances in patchInfo.PatchedInstantiations) {
+                UnpatchInstantiation(instances.Value);
             }
         }
 

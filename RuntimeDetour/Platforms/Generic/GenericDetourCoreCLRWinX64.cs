@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MonoMod.RuntimeDetour;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -198,5 +199,13 @@ jmp rax
             0xFF, 0xE0                      // jmp rax
         };
         #endregion
+
+        protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart) {
+            throw new NotImplementedException();
+        }
+
+        protected override void UnpatchInstantiation(InstantiationPatch instantiation) {
+            throw new NotImplementedException();
+        }
     }
 }
