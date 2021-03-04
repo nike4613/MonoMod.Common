@@ -200,6 +200,97 @@ jmp rax
         };
         #endregion
 
+        #region Thunk executable segment
+        private struct ConstThunkMemory {
+            public IntPtr MemStart;
+            public IntPtr TP_thunk;
+            public IntPtr INB_SB_thunk;
+            public IntPtr IB_thunk;
+        }
+
+        private static uint RoundLength(uint len) {
+            return ((len / 64) + 1) * 64;
+        }
+
+        private static unsafe ConstThunkMemory BuildThunkMemory() {
+            uint allocSize = RoundLength((uint)ThisPtrBufThunk.Length) + RoundLength((uint) ThisPtrThunk.Length) + RoundLength((uint) ThisPtrNoBufThunk.Length);
+            IntPtr alloc = DetourHelper.Native.MemAlloc(allocSize);
+            DetourHelper.Native.MakeWritable(alloc, allocSize);
+
+            byte* data = (byte*) alloc;
+            for (uint i = 0; i < allocSize; i++)
+                data[i] = 0xCC; // fill with 0xCC
+
+            ConstThunkMemory mem = new ConstThunkMemory { MemStart = alloc };
+
+            fixed (byte* tpThunk = ThisPtrThunk) {
+                mem.TP_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) ThisPtrThunk.Length);
+                data += RoundLength((uint) ThisPtrThunk.Length);
+            }
+
+            fixed (byte* tpThunk = ThisPtrNoBufThunk) {
+                mem.INB_SB_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) ThisPtrNoBufThunk.Length);
+                data += RoundLength((uint) ThisPtrNoBufThunk.Length);
+            }
+
+            fixed (byte* tpThunk = ThisPtrBufThunk) {
+                mem.IB_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) ThisPtrBufThunk.Length);
+            }
+
+            DetourHelper.Native.MakeExecutable(alloc, allocSize);
+            DetourHelper.Native.FlushICache(alloc, allocSize);
+
+            return mem;
+        }
+
+        private static void FreeThunkMemory(ConstThunkMemory mem) {
+            DetourHelper.Native.MemFree(mem.MemStart);
+        }
+
+        private readonly ConstThunkMemory thunkMemory = BuildThunkMemory();
+
+        ~GenericDetourCoreCLRWinX64() {
+            FreeThunkMemory(thunkMemory);
+        }
+        #endregion
+
+        private static unsafe void Copy(byte* from, byte* to, uint length) {
+            for (uint i = 0; i < length / 4; i++) {
+                *(uint*) to = *(uint*) from;
+                from += 4;
+                to += 4;
+            }
+            if (length % 4 >= 2) {
+                *(ushort*) to = *(ushort*) from;
+                from += 2;
+                to += 2;
+            }
+            if (length % 2 >= 1) {
+                *to = *from;
+            }
+        }
+
+        private static unsafe void Copy(IntPtr from, IntPtr to, uint length)
+            => Copy((byte*) from, (byte*) to, length);
+
+        private enum CallType {
+            Rel32,
+            Abs64
+        }
+
+        private static bool Is32Bit(long to)
+            // JMP rel32 is "sign extended to 64-bits"
+            => (((ulong) to) & 0x000000007FFFFFFFUL) == ((ulong) to);
+
+        private static CallType FindCallType(IntPtr from, IntPtr to) {
+            return Is32Bit((long) to - (long) from)
+                ? CallType.Rel32
+                : CallType.Abs64;
+        }
+
         protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart) {
             throw new NotImplementedException();
         }
