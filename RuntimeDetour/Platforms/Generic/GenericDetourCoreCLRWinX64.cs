@@ -305,11 +305,21 @@ jmp rax
                 + 8u; // call abs address
 
         private IntPtr GetThunkForMethod(MethodBase instance) {
-            throw new NotImplementedException();
+            // TODO: figure out how to determine if we have a return buffer
+            if (TakesGenericsFromThis(instance))
+                return thunkMemory.TP_thunk;
+            // currently we assume that there there is never a return buffer, so always return the thunk assuming that
+            return thunkMemory.INB_SB_thunk;
         }
 
         private IntPtr GetHandlerForMethod(MethodBase instance) {
-            throw new NotImplementedException();
+            if (TakesGenericsFromThis(instance))
+                return FixupForThisPtrContext;
+            if (RequiresMethodTableArg(instance))
+                return FixupForMethodTableContext;
+            if (RequiresMethodDescArg(instance))
+                return FixupForMethodDescContext;
+            return UnknownMethodABI;
         }
 
         protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {

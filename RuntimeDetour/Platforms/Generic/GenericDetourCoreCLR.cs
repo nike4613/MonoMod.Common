@@ -192,7 +192,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
-        private static IntPtr FixupForThisPtrContext
+        protected static IntPtr FixupForThisPtrContext
             => fixupForThisPtrCtx != IntPtr.Zero
                     ? fixupForThisPtrCtx
                     : (fixupForThisPtrCtx = GetMethodOnSelf(nameof(FindAndFixupThunkForThisPtrContext)).GetNativeStart());
@@ -210,7 +210,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         private static IntPtr fixupForMethodDescContext = IntPtr.Zero;
-        private static IntPtr FixupForMethodDescContext
+        protected static IntPtr FixupForMethodDescContext
             => fixupForMethodDescContext != IntPtr.Zero
                     ? fixupForMethodDescContext
                     : (fixupForMethodDescContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodDescContext)).GetNativeStart());
@@ -228,7 +228,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         private static IntPtr fixupForMethodTableContext = IntPtr.Zero;
-        private static IntPtr FixupForMethodTableContext
+        protected static IntPtr FixupForMethodTableContext
             => fixupForMethodTableContext != IntPtr.Zero
                     ? fixupForMethodTableContext
                     : (fixupForMethodTableContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodTableContext)).GetNativeStart());
@@ -252,6 +252,25 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
         private static void FailedToResolvePatchTarget() {
             throw new Exception("Could not resolve patch target; see mmdbg for more information");
+        }
+
+
+        private static IntPtr unknownMethodAbi = IntPtr.Zero;
+        protected static IntPtr UnknownMethodABI
+            => unknownMethodAbi != IntPtr.Zero
+                    ? unknownMethodAbi
+                    : (unknownMethodAbi = GetMethodOnSelf(nameof(UnknownMethodABIResolve)).GetNativeStart());
+        private static IntPtr UnknownMethodABIResolve() {
+            return UnknownMethodABITarget;
+        }
+
+        private static IntPtr unknownMethodAbiTarget = IntPtr.Zero;
+        private static IntPtr UnknownMethodABITarget
+            => unknownMethodAbiTarget != IntPtr.Zero
+                    ? unknownMethodAbiTarget
+                    : (unknownMethodAbiTarget = GetMethodOnSelf(nameof(UnknownMethodABIThrow)).GetNativeStart());
+        private static IntPtr UnknownMethodABIThrow() {
+            throw new Exception("Unknown ABI for generic method instance");
         }
         #endregion
 
