@@ -6,7 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
-namespace MonoMod.Common.RuntimeDetour.Platforms {
+namespace MonoMod.RuntimeDetour.Platforms {
 
     // There are 4 cases we need to handle:
     // - Unshared generics. This is trivial.

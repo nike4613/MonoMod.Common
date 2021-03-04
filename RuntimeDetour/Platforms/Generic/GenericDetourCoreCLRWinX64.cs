@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
-namespace MonoMod.Common.RuntimeDetour.Platforms.Generic {
+namespace MonoMod.RuntimeDetour.Platforms.Generic {
 #if !MONOMOD_INTERNAL
     public
 #endif

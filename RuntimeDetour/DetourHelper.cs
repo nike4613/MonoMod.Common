@@ -7,6 +7,7 @@ using MonoMod.RuntimeDetour.Platforms;
 using Mono.Cecil.Cil;
 using System.Threading;
 using Mono.Cecil;
+using MonoMod.RuntimeDetour.Platforms.Generic;
 
 namespace MonoMod.RuntimeDetour {
 #if !MONOMOD_INTERNAL
@@ -92,6 +93,34 @@ namespace MonoMod.RuntimeDetour {
                 }
             }
             set => _Native = value;
+        }
+
+        private static readonly object _GenericLock = new object();
+        private static IGenericDetourPlatform _Generic;
+        public static IGenericDetourPlatform Generic {
+            get {
+                if (_Generic != null)
+                    return _Generic;
+
+                lock (_GenericLock) {
+                    if (_Generic != null)
+                        return _Generic;
+
+                    if (PlatformHelper.Is(Platform.Windows)) {
+                        if (PlatformHelper.Is(Platform.ARM)) {
+
+                        } else {
+                            if (PlatformHelper.Is(Platform.Bits64)) {
+                                if (Runtime is DetourRuntimeNETCore30Platform) {
+                                    return _Generic = new GenericDetourCoreCLRWinX64();
+                                }
+                            }
+                        }
+                    }
+
+                    throw new NotImplementedException();
+                }
+            }
         }
 
         #region Interface extension methods

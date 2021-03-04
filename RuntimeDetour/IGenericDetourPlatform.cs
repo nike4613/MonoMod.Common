@@ -4,7 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
-namespace MonoMod.Common.RuntimeDetour {
+namespace MonoMod.RuntimeDetour {
 #if !MONOMOD_INTERNAL
     public
 #endif
