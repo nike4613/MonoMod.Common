@@ -286,7 +286,7 @@ jmp rax
             => (((ulong) to) & 0x000000007FFFFFFFUL) == ((ulong) to);
 
         private static CallType FindCallType(IntPtr from, IntPtr to) {
-            return Is32Bit((long) to - (long) from)
+            return Is32Bit((long) to - (long) from) || Is32Bit((long) from - (long) to)
                 ? CallType.Rel32
                 : CallType.Abs64;
         }
@@ -349,7 +349,7 @@ jmp rax
             } else {
                 codeStart.Write(ref idx, (byte) 0xFF);
                 codeStart.Write(ref idx, (byte) 0x15);
-                codeStart.Write(ref idx, (uint) (8 + 4 + 2)); // offset from end of instruction to end of other data for real address
+                codeStart.Write(ref idx, (uint) (6 + 8 + 4 + 2)); // offset from start of instruction to end of other data for real address
             }
             codeStart.Write(ref idx, (ulong) handler);
             codeStart.Write(ref idx, (uint) index);

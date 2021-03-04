@@ -299,7 +299,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
             int index;
             lock (genericPatchesLockObject) {
-                if (!patchedMethodIndexes.TryGetValue(method, out index))
+                if (!patchedMethodIndexes.TryGetValue(methodDecl, out index))
                     return; // we have no patches for this registered
             }
 
