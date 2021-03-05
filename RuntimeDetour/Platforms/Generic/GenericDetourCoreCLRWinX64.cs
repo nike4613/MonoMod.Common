@@ -18,16 +18,34 @@ namespace MonoMod.RuntimeDetour.Platforms.Generic {
 
         // we use ;# for comments in assembly to be slightly more portable across assemblers
 
+        // the code used was generated using NASM and hexdump
+        // each NASM file starts with this header:
+        //* bits 64
+        //* default rel
+        //* section .text
+        // they are assembled using this command:
+        // $ nasm -f bin thunk.s
+        // which is then exported with
+        // $ hexdump -e '/1 "0x%02X, "' thunk
+        // which can be pasted into the bye arrays
+
+        // it seems our thunks *require* us to set up stack frames correctly, and allocate at least enough space for the parameters to call the handlers
+
         #region Read from position 1
         // reads from first arg
         /**** this pointer context thunk assembly ****\
 pop r10 ;# r10 isn't used to pass arguments on Windows; it now contains the return position
 
-;# save register-passed arguments
-push rcx
-push rdx
-push r8
-push r9
+;# setup stack frame
+push rbp
+sub rsp, 40h ;# 4 qword (20h) + 3 qword arguments (18h) + some buffer
+lea rbp, [rsp + 40h]
+
+;# save register-passed arguments, specifically in the top of our allocated range
+mov [rbp - 8h], rcx
+mov [rbp - 10h], rdx
+mov [rbp - 18h], r8
+mov [rbp - 20h], r9
 
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
@@ -48,32 +66,29 @@ mov edx, [r10 + 8] ;# offset of the index
 call [r10]
 
 ;# rax now contains our target method, but we need to re-load our arguments
-pop r9
-pop r8
-pop rdx
-pop rcx
+mov rcx, [rbp - 8h]
+mov rdx, [rbp - 10h]
+mov r8, [rbp - 18h]
+mov r9, [rbp - 20h]
+
+;# clean up our stack frame
+lea rsp, [rbp]
+pop rbp
 
 ;# we're finally ready to call our target
-        jmp rax
+jmp rax
         */
         private static readonly byte[] Pos1Thunk = {
-            0x41, 0x5A,                     // pop r10
-            0x51,                           // push rcx
-            0x52,                           // push rdx
-            0x41, 0x50,                     // push r8
-            0x41, 0x51,                     // push r9
-            0x4D, 0x89, 0xD0,               // mov r8, r10
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x66, 0x41, 0x8B, 0x52, 0x0C,   // mov dx, [r10 + 12]
-            0x49, 0x29, 0xD0,               // sub r8, rdx
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x41, 0x8B, 0x52, 0x08,         // mov edx, [r10 + 8]
-            0x41, 0xFF, 0x12,               // call [r10]
-            0x41, 0x59,                     // pop r9
-            0x41, 0x58,                     // pop r8
-            0x5A,                           // pop rdx
-            0x59,                           // pop rcx
-            0xFF, 0xE0                      // jmp rax
+            0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
+            0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
+            0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
+            0x4C, 0x89, 0x4D, 0xE0, 0x4D, 0x89, 0xD0, 0x48,
+            0x31, 0xD2, 0x66, 0x41, 0x8B, 0x52, 0x0C, 0x49,
+            0x29, 0xD0, 0x48, 0x31, 0xD2, 0x41, 0x8B, 0x52,
+            0x08, 0x41, 0xFF, 0x12, 0x48, 0x8B, 0x4D, 0xF8,
+            0x48, 0x8B, 0x55, 0xF0, 0x4C, 0x8B, 0x45, 0xE8,
+            0x4C, 0x8B, 0x4D, 0xE0, 0x48, 0x8D, 0x65, 0x00,
+            0x5D, 0xFF, 0xE0,
         };
         #endregion
 
@@ -84,12 +99,17 @@ pop rcx
 ;# no this pointer and a return buffer
 
 pop r10 ;# get the return address for where we're calling from
-        
-;# save register-passed arguments
-push rcx
-push rdx
-push r8
-push r9
+     
+;# setup stack frame
+push rbp
+sub rsp, 40h ;# 4 qword (20h) + 3 qword arguments (18h) + some buffer
+lea rbp, [rsp + 40h]
+
+;# save register-passed arguments, specifically in the top of our allocated range
+mov [rbp - 8h], rcx
+mov [rbp - 10h], rdx
+mov [rbp - 18h], r8
+mov [rbp - 20h], r9
 
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
@@ -109,37 +129,32 @@ mov edx, [r10 + 8] ;# offset of the index
 
 ;# finally call handler
 call [r10]
-
+        
 ;# rax now contains our target method, but we need to re-load our arguments
-pop r9
-pop r8
-pop rdx
-pop rcx
+mov rcx, [rbp - 8h]
+mov rdx, [rbp - 10h]
+mov r8, [rbp - 18h]
+mov r9, [rbp - 20h]
+
+;# clean up our stack frame
+lea rsp, [rbp]
+pop rbp
 
 ;# we're finally ready to call our target
 jmp rax
         */
         private static readonly byte[] Pos2Thunk = {
-            0x41, 0x5A,                     // pop r10
-            0x51,                           // push rcx
-            0x52,                           // push rdx
-            0x41, 0x50,                     // push r8
-            0x41, 0x51,                     // push r9
-            0x48, 0x89, 0xD1,               // mov rcx, rdx
-            0x4D, 0x89, 0xD0,               // mov r8, r10
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x66, 0x41, 0x8B, 0x52, 0x0C,   // mov dx, [r10 + 12]
-            0x49, 0x29, 0xD0,               // sub r8, rdx
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x41, 0x8B, 0x52, 0x08,         // mov edx, [r10 + 8]
-            0x41, 0xFF, 0x12,               // call [r10]
-            0x41, 0x59,                     // pop r9
-            0x41, 0x58,                     // pop r8
-            0x5A,                           // pop rdx
-            0x59,                           // pop rcx
-            0xFF, 0xE0                      // jmp rax
+            0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
+            0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
+            0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
+            0x4C, 0x89, 0x4D, 0xE0, 0x48, 0x89, 0xD1, 0x4D,
+            0x89, 0xD0, 0x48, 0x31, 0xD2, 0x66, 0x41, 0x8B,
+            0x52, 0x0C, 0x49, 0x29, 0xD0, 0x48, 0x31, 0xD2,
+            0x41, 0x8B, 0x52, 0x08, 0x41, 0xFF, 0x12, 0x48,
+            0x8B, 0x4D, 0xF8, 0x48, 0x8B, 0x55, 0xF0, 0x4C,
+            0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
+            0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
-        // ^^^ the above is also used when there is no this pointer but there is a return buffer
         #endregion
 
         #region Read from position 3
@@ -147,11 +162,16 @@ jmp rax
         /**** instance return buffer generic cookie ****\
 pop r10 ;# get the return address for where we're calling from
         
-;# save register-passed arguments
-push rcx
-push rdx
-push r8
-push r9
+;# setup stack frame
+push rbp
+sub rsp, 40h ;# 4 qword (20h) + 3 qword arguments (18h) + some buffer
+lea rbp, [rsp + 40h]
+
+;# save register-passed arguments, specifically in the top of our allocated range
+mov [rbp - 8h], rcx
+mov [rbp - 10h], rdx
+mov [rbp - 18h], r8
+mov [rbp - 20h], r9
 
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
@@ -171,35 +191,31 @@ mov edx, [r10 + 8] ;# offset of the index
 
 ;# finally call handler
 call [r10]
-
+        
 ;# rax now contains our target method, but we need to re-load our arguments
-pop r9
-pop r8
-pop rdx
-pop rcx
+mov rcx, [rbp - 8h]
+mov rdx, [rbp - 10h]
+mov r8, [rbp - 18h]
+mov r9, [rbp - 20h]
+
+;# clean up our stack frame
+lea rsp, [rbp]
+pop rbp
 
 ;# we're finally ready to call our target
 jmp rax
         */
         private static readonly byte[] Pos3Thunk = {
-            0x41, 0x5A,                     // pop r10
-            0x51,                           // push rcx
-            0x52,                           // push rdx
-            0x41, 0x50,                     // push r8
-            0x41, 0x51,                     // push r9
-            0x4C, 0x89, 0xC1,               // mov rcx, r8
-            0x4D, 0x89, 0xD0,               // mov r8, r10
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x66, 0x41, 0x8B, 0x52, 0x0C,   // mov dx, [r10 + 12]
-            0x49, 0x29, 0xD0,               // sub r8, rdx
-            0x48, 0x31, 0xD2,               // xor rdx, rdx
-            0x41, 0x8B, 0x52, 0x08,         // mov edx, [r10 + 8]
-            0x41, 0xFF, 0x12,               // call [r10]
-            0x41, 0x59,                     // pop r9
-            0x41, 0x58,                     // pop r8
-            0x5A,                           // pop rdx
-            0x59,                           // pop rcx
-            0xFF, 0xE0                      // jmp rax
+            0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
+            0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
+            0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
+            0x4C, 0x89, 0x4D, 0xE0, 0x4C, 0x89, 0xC1, 0x4D,
+            0x89, 0xD0, 0x48, 0x31, 0xD2, 0x66, 0x41, 0x8B,
+            0x52, 0x0C, 0x49, 0x29, 0xD0, 0x48, 0x31, 0xD2,
+            0x41, 0x8B, 0x52, 0x08, 0x41, 0xFF, 0x12, 0x48,
+            0x8B, 0x4D, 0xF8, 0x48, 0x8B, 0x55, 0xF0, 0x4C,
+            0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
+            0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
         #endregion
 

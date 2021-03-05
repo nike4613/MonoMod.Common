@@ -253,7 +253,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static void FailedToResolvePatchTarget() {
-            throw new Exception("Could not resolve patch target; see mmdbg for more information");
+            throw new Exception("Could not resolve patch target; see mmdbglog for more information");
         }
 
 
@@ -290,6 +290,8 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         private void OnMethodCompiled(MethodBase method, IntPtr codeStart, ulong codeSize) {
+            if (method is null)
+                return;
             if (!method.IsGenericMethod && !method.DeclaringType.IsGenericType)
                 return; // the method is not generic at all
 
