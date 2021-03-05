@@ -94,7 +94,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             */
 
             return
-                method.IsGenericMethod &&
+                !method.IsGenericMethod &&
                 MethodIsGenericShared(method) &&
                 !method.IsStatic &&
                 !method.DeclaringType.IsValueType &&
@@ -292,14 +292,14 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private void OnMethodCompiled(MethodBase method, IntPtr codeStart, ulong codeSize) {
             if (method is null)
                 return;
-            if (!method.IsGenericMethod && !method.DeclaringType.IsGenericType)
+            if (!method.IsGenericMethod && !(method.DeclaringType?.IsGenericType ?? false))
                 return; // the method is not generic at all
 
             MethodBase methodDecl = method;
             if (methodDecl is MethodInfo minfo && minfo.IsGenericMethod) {
                 methodDecl = minfo.GetGenericMethodDefinition();
             }
-            if (methodDecl.DeclaringType.IsGenericType) {
+            if (methodDecl.DeclaringType?.IsGenericType ?? false) {
                 methodDecl = MethodBase.GetMethodFromHandle(methodDecl.MethodHandle, methodDecl.DeclaringType.GetGenericTypeDefinition().TypeHandle); ;
             }
 
