@@ -1,10 +1,8 @@
-﻿using MonoMod.RuntimeDetour;
-using MonoMod.RuntimeDetour.Platforms;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
+using System.Runtime.CompilerServices;
 
 namespace MonoMod.RuntimeDetour.Platforms {
 
@@ -197,6 +195,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     ? fixupForThisPtrCtx
                     : (fixupForThisPtrCtx = GetMethodOnSelf(nameof(FindAndFixupThunkForThisPtrContext)).GetNativeStart());
 
+        [MethodImpl((MethodImplOptions)512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
             try {
                 // this will only be called from ThisPtrThunk
@@ -215,6 +214,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     ? fixupForMethodDescContext
                     : (fixupForMethodDescContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodDescContext)).GetNativeStart());
 
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
             try {
                 // methodDesc contains the MethodDesc* for the current method
@@ -233,6 +233,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
                     ? fixupForMethodTableContext
                     : (fixupForMethodTableContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodTableContext)).GetNativeStart());
 
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
             try {
                 // methodTable contains the MethodTable* (the type) the current method is on
@@ -250,6 +251,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             => patchResolveFailureTarget != IntPtr.Zero
                     ? patchResolveFailureTarget
                     : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static void FailedToResolvePatchTarget() {
             throw new Exception("Could not resolve patch target; see mmdbg for more information");
         }
@@ -260,6 +262,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             => unknownMethodAbi != IntPtr.Zero
                     ? unknownMethodAbi
                     : (unknownMethodAbi = GetMethodOnSelf(nameof(UnknownMethodABIResolve)).GetNativeStart());
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr UnknownMethodABIResolve() {
             return UnknownMethodABITarget;
         }
@@ -269,7 +272,8 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             => unknownMethodAbiTarget != IntPtr.Zero
                     ? unknownMethodAbiTarget
                     : (unknownMethodAbiTarget = GetMethodOnSelf(nameof(UnknownMethodABIThrow)).GetNativeStart());
-        private static IntPtr UnknownMethodABIThrow() {
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
+        private static void UnknownMethodABIThrow() {
             throw new Exception("Unknown ABI for generic method instance");
         }
         #endregion

@@ -18,7 +18,8 @@ namespace MonoMod.RuntimeDetour.Platforms.Generic {
 
         // we use ;# for comments in assembly to be slightly more portable across assemblers
 
-        #region ThisPtr context thunk
+        #region Read from position 1
+        // reads from first arg
         /**** this pointer context thunk assembly ****\
 pop r10 ;# r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -31,7 +32,7 @@ push r9
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
 
-;# first arg is the this ptr
+;# first arg is the this ptr/generic context
 
 ;# the third arg is the source start
 mov r8, r10 ;# r8 is the argument we want it in
@@ -55,7 +56,7 @@ pop rcx
 ;# we're finally ready to call our target
         jmp rax
         */
-        private static readonly byte[] ThisPtrThunk = {
+        private static readonly byte[] Pos1Thunk = {
             0x41, 0x5A,                     // pop r10
             0x51,                           // push rcx
             0x52,                           // push rdx
@@ -76,7 +77,8 @@ pop rcx
         };
         #endregion
 
-        #region InstNoBuf context/StaticBuf context
+        #region Read from position 2
+        // reads from second arg
         /**** instance no return buffer generic cookie/static return buffer generic cookie ****\
 ;#   the position of the generic cookie is the same when there is a this pointer and no return buffer as if there is 
 ;# no this pointer and a return buffer
@@ -92,7 +94,7 @@ push r9
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
 
-;# first arg is the generic cookie, which is in rdx
+;# second arg is the generic cookie, which is in rdx
 mov rcx, rdx
 
 ;# the third arg is the source start
@@ -117,7 +119,7 @@ pop rcx
 ;# we're finally ready to call our target
 jmp rax
         */
-        private static readonly byte[] ThisPtrNoBufThunk = {
+        private static readonly byte[] Pos2Thunk = {
             0x41, 0x5A,                     // pop r10
             0x51,                           // push rcx
             0x52,                           // push rdx
@@ -140,8 +142,9 @@ jmp rax
         // ^^^ the above is also used when there is no this pointer but there is a return buffer
         #endregion
 
-        #region InstBuf context
-        /**** instance return buffer generic cookiee ****\
+        #region Read from position 3
+        // reads from third arg
+        /**** instance return buffer generic cookie ****\
 pop r10 ;# get the return address for where we're calling from
         
 ;# save register-passed arguments
@@ -153,7 +156,7 @@ push r9
 ;# setup call
 ;# the methods being called here have no strangeness, only user args passed in register
 
-;# first arg is the generic cookie, which is in rdx
+;# third arg is the generic cookie, which is in r8
 mov rcx, r8
 
 ;# the third arg is the source start
@@ -178,7 +181,7 @@ pop rcx
 ;# we're finally ready to call our target
 jmp rax
         */
-        private static readonly byte[] ThisPtrBufThunk = {
+        private static readonly byte[] Pos3Thunk = {
             0x41, 0x5A,                     // pop r10
             0x51,                           // push rcx
             0x52,                           // push rdx
@@ -203,9 +206,9 @@ jmp rax
         #region Thunk executable segment
         private struct ConstThunkMemory {
             public IntPtr MemStart;
-            public IntPtr TP_thunk;
-            public IntPtr INB_SB_thunk;
-            public IntPtr IB_thunk;
+            public IntPtr A1_thunk;
+            public IntPtr A2_thunk;
+            public IntPtr A3_thunk;
         }
 
         private static uint RoundLength(uint len) {
@@ -213,7 +216,7 @@ jmp rax
         }
 
         private static unsafe ConstThunkMemory BuildThunkMemory() {
-            uint allocSize = RoundLength((uint)ThisPtrBufThunk.Length) + RoundLength((uint) ThisPtrThunk.Length) + RoundLength((uint) ThisPtrNoBufThunk.Length);
+            uint allocSize = RoundLength((uint) Pos1Thunk.Length) + RoundLength((uint) Pos2Thunk.Length) + RoundLength((uint) Pos3Thunk.Length);
             IntPtr alloc = DetourHelper.Native.MemAlloc(allocSize);
             DetourHelper.Native.MakeWritable(alloc, allocSize);
 
@@ -223,21 +226,21 @@ jmp rax
 
             ConstThunkMemory mem = new ConstThunkMemory { MemStart = alloc };
 
-            fixed (byte* tpThunk = ThisPtrThunk) {
-                mem.TP_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) ThisPtrThunk.Length);
-                data += RoundLength((uint) ThisPtrThunk.Length);
+            fixed (byte* tpThunk = Pos1Thunk) {
+                mem.A1_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pos1Thunk.Length);
+                data += RoundLength((uint) Pos1Thunk.Length);
             }
 
-            fixed (byte* tpThunk = ThisPtrNoBufThunk) {
-                mem.INB_SB_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) ThisPtrNoBufThunk.Length);
-                data += RoundLength((uint) ThisPtrNoBufThunk.Length);
+            fixed (byte* tpThunk = Pos2Thunk) {
+                mem.A2_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pos2Thunk.Length);
+                data += RoundLength((uint) Pos2Thunk.Length);
             }
 
-            fixed (byte* tpThunk = ThisPtrBufThunk) {
-                mem.IB_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) ThisPtrBufThunk.Length);
+            fixed (byte* tpThunk = Pos3Thunk) {
+                mem.A3_thunk = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pos3Thunk.Length);
             }
 
             DetourHelper.Native.MakeExecutable(alloc, allocSize);
@@ -306,10 +309,20 @@ jmp rax
 
         private IntPtr GetThunkForMethod(MethodBase instance) {
             // TODO: figure out how to determine if we have a return buffer
-            if (TakesGenericsFromThis(instance))
-                return thunkMemory.TP_thunk;
-            // currently we assume that there there is never a return buffer, so always return the thunk assuming that
-            return thunkMemory.INB_SB_thunk;
+            if (TakesGenericsFromThis(instance)) {
+                // if we take generics from the this parameter, grab the first given arg
+                return thunkMemory.A1_thunk;
+            }
+            if (!instance.IsStatic ^ false /* has return buffer */) {
+                // currently we assume that there there is never a return buffer, so always return the thunk assuming that
+                // if it takes a this arg OR has a return buffer BUT NOT BOTH, grab the second given arg
+                return thunkMemory.A2_thunk;
+            } else if (!instance.IsStatic && false /* has return buffer */) {
+                // if it takes a this arg AND has a return buffer, grab the third given arg
+                return thunkMemory.A3_thunk;
+            }
+            // otherwise the context is in the first given arg
+            return thunkMemory.A1_thunk;
         }
 
         private IntPtr GetHandlerForMethod(MethodBase instance) {
@@ -349,7 +362,7 @@ jmp rax
             } else {
                 codeStart.Write(ref idx, (byte) 0xFF);
                 codeStart.Write(ref idx, (byte) 0x15);
-                codeStart.Write(ref idx, (uint) (6 + 8 + 4 + 2)); // offset from start of instruction to end of other data for real address
+                codeStart.Write(ref idx, (uint) (8 + 4 + 2)); // offset from end of instruction to end of other data for real address
             }
             codeStart.Write(ref idx, (ulong) handler);
             codeStart.Write(ref idx, (uint) index);
