@@ -181,7 +181,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             => typeof(GenericDetourCoreCLR)
                         .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
 
-        private static void BackpatchJump(IntPtr source, IntPtr target) {
+        protected virtual void BackpatchJump(IntPtr source, IntPtr target, object backpatchInfo) {
             IDetourNativePlatform platform = DetourHelper.Native;
             NativeDetourData data = platform.Create(source, target);
             platform.MakeWritable(data);
@@ -199,8 +199,8 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
             try {
                 // this will only be called from ThisPtrThunk
-                IntPtr target = Instance.FindTargetForThisPtrContext(thisptr, index);
-                BackpatchJump(origStart, target);
+                IntPtr target = Instance.FindTargetForThisPtrContext(thisptr, index, out object backpatchInfo);
+                Instance.BackpatchJump(origStart, target, backpatchInfo);
                 return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
@@ -218,8 +218,8 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
             try {
                 // methodDesc contains the MethodDesc* for the current method
-                IntPtr target = Instance.FindTargetForMethodDescContext(methodDesc, index);
-                BackpatchJump(origStart, target);
+                IntPtr target = Instance.FindTargetForMethodDescContext(methodDesc, index, out object backpatchInfo);
+                Instance.BackpatchJump(origStart, target, backpatchInfo);
                 return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
@@ -237,8 +237,8 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
             try {
                 // methodTable contains the MethodTable* (the type) the current method is on
-                IntPtr target = Instance.FindTargetForMethodTableContext(methodTable, index);
-                BackpatchJump(origStart, target);
+                IntPtr target = Instance.FindTargetForMethodTableContext(methodTable, index, out object backpatchInfo);
+                Instance.BackpatchJump(origStart, target, backpatchInfo);
                 return target;
             } catch (Exception e) {
                 MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
@@ -411,7 +411,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         #region Real Target Locators
-        protected IntPtr FindTargetForThisPtrContext(object thisptr, int index) {
+        protected IntPtr FindTargetForThisPtrContext(object thisptr, int index, out object backpatchInfo) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
             MethodBase origSrc = patchInfo.SourceMethod;
@@ -435,22 +435,20 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
             MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
 
-            return GetRealTarget(realMethod, patchInfo.TargetMethod);
+            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
         }
 
-        protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index) {
+        protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index, out object backpatchInfo) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
-
-            MethodBase origSrc = patchInfo.SourceMethod;
 
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
 
             MethodBase realMethod = MethodBase.GetMethodFromHandle(handle);
 
-            return GetRealTarget(realMethod, patchInfo.TargetMethod);
+            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
         }
 
-        protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index) {
+        protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index, out object backpatchInfo) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
             MethodBase origSrc = patchInfo.SourceMethod;
@@ -464,13 +462,10 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
             MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
 
-            return GetRealTarget(realMethod, patchInfo.TargetMethod);
+            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
         }
 
-        protected IntPtr GetRealTarget(MethodBase realSrc, MethodBase origTarget) {
-
-            throw new NotImplementedException();
-        }
+        protected abstract IntPtr GetRealTarget(GenericPatchInfo patch, MethodBase realSrc, MethodBase origTarget, out object backpatchInfo);
         #endregion
     }
 }

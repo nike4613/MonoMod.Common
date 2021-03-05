@@ -407,5 +407,9 @@ jmp rax
             // be sure to free the associated memory
             DetourHelper.Native.MemFree(data.Extra);
         }
+
+        protected override IntPtr GetRealTarget(GenericPatchInfo patchInfo, MethodBase realSrc, MethodBase origTarget, out object backpatchInfo) {
+            throw new NotImplementedException();
+        }
     }
 }
