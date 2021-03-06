@@ -7,7 +7,6 @@ using MonoMod.RuntimeDetour.Platforms;
 using Mono.Cecil.Cil;
 using System.Threading;
 using Mono.Cecil;
-using MonoMod.RuntimeDetour.Platforms.Generic;
 
 namespace MonoMod.RuntimeDetour {
 #if !MONOMOD_INTERNAL

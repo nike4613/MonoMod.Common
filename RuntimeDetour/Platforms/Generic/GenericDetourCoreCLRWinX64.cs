@@ -5,11 +5,13 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
-namespace MonoMod.RuntimeDetour.Platforms.Generic {
+namespace MonoMod.RuntimeDetour.Platforms {
 #if !MONOMOD_INTERNAL
     public
 #endif
     class GenericDetourCoreCLRWinX64 : GenericDetourCoreCLR {
+
+        #region Precall Thunks
 
         // for all of the thunks, the initial detour jump will be a call instruction
         // immediately following that instruction will be the pointer to the correct handling method
@@ -78,7 +80,7 @@ pop rbp
 ;# we're finally ready to call our target
 jmp rax
         */
-        private static readonly byte[] Pos1Thunk = {
+        private static readonly byte[] Pre1Thunk = {
             0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
             0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
             0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
@@ -143,7 +145,7 @@ pop rbp
 ;# we're finally ready to call our target
 jmp rax
         */
-        private static readonly byte[] Pos2Thunk = {
+        private static readonly byte[] Pre2Thunk = {
             0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
             0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
             0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
@@ -205,7 +207,7 @@ pop rbp
 ;# we're finally ready to call our target
 jmp rax
         */
-        private static readonly byte[] Pos3Thunk = {
+        private static readonly byte[] Pre3Thunk = {
             0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
             0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
             0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
@@ -219,44 +221,264 @@ jmp rax
         };
         #endregion
 
+        #endregion
+
+        #region Call Thunks
+        /*
+; calling any M thunks means that you must have, immediately following the call instruction,
+; * a pointer to the actual target code
+; * the real generic context for the call (64-bit)
+; * a byte containing additional flags.
+; * a byte containing the amount to adjust the stack pointer after pushing the fourth arg as
+;   a 64-bit integer (computed as 8 - sizeof(arg4))
+
+; the flags byte has the following bits:
+; * 0: set if the fourth argument is floating point
+; * 1: set if the fourth argument is floating point and is a double
+        */
+
+        #region Call Move 2+
+        /*
+; our goal is to move all arguments including and after 2 down and insert our generic context
+; this is used when the source uses the this pointer for context and has no return buffer
+
+pop r10 ; load the return address to use for more info
+
+pop r11 ; load the return-return address so we can manipulate the stack a bit
+
+test byte [r10 + 10h], 1b ; check if the flag for floating point is set
+jnz flop
+
+; conveniently, our calling convention pushes arguments in reverse order
+; do regular push
+push r9 ; push the last register argument to the stack
+add rsp, [r10 + 11h] ; do final adjustment
+
+jmp movRegs
+flop:
+; idfk what to do here????
+
+test byte [r10 + 10h], 10b ; check if double flag is set
+jnz double
+
+; move single
+sub rsp, 4 ; sizeof(single)
+movss [rsp], xmm3
+
+jmp movRegs
+double:
+; move double
+sub rsp, 8 ; sizeof(double)
+movsd [rsp], xmm3
+
+movRegs:
+
+push r11 ; make sure to push the return address back onto the stack
+
+; integer args
+mov r9, r8
+mov r8, rdx
+
+; floating point args
+movsd xmm3, xmm2
+movsd xmm2, xmm1
+; do I need movss or movsd???
+
+mov rdx, [r10 + 8h] ; the location of the new generic context into position 2
+
+; now we're set up to just call the actual target
+jmp [r10] ; call the actual target
+         */
+        private static readonly byte[] CallM2Thunk = {
+            0x41, 0x5A, 0x41, 0x5B, 0x41, 0xF6, 0x42, 0x10,
+            0x01, 0x75, 0x08, 0x41, 0x51, 0x49, 0x03, 0x62,
+            0x11, 0xEB, 0x1B, 0x41, 0xF6, 0x42, 0x10, 0x02,
+            0x75, 0x0B, 0x48, 0x83, 0xEC, 0x04, 0xF3, 0x0F,
+            0x11, 0x1C, 0x24, 0xEB, 0x09, 0x48, 0x83, 0xEC,
+            0x08, 0xF2, 0x0F, 0x11, 0x1C, 0x24, 0x41, 0x53,
+            0x4D, 0x89, 0xC1, 0x49, 0x89, 0xD0, 0xF2, 0x0F,
+            0x10, 0xDA, 0xF2, 0x0F, 0x10, 0xD1, 0x49, 0x8B,
+            0x52, 0x08, 0x41, 0xFF, 0x22,
+        };
+        #endregion
+
+        #region Call Move 3+
+        /*
+; our goal is to move all arguments including and after 3 down and insert our generic context
+; this is used when the source uses the this pointer for context and has no return buffer
+
+pop r10 ; load the return address to use for more info
+
+pop r11 ; load the return-return address so we can manipulate the stack a bit
+
+test byte [r10 + 10h], 1b ; check if the flag for floating point is set
+jnz flop
+
+; conveniently, our calling convention pushes arguments in reverse order
+; do regular push
+push r9 ; push the last register argument to the stack
+add rsp, [r10 + 11h] ; do final adjustment
+
+jmp movRegs
+flop:
+; idfk what to do here????
+
+test byte [r10 + 10h], 10b ; check if double flag is set
+jnz double
+
+; move single
+sub rsp, 4 ; sizeof(single)
+movss [rsp], xmm3
+
+jmp movRegs
+double:
+; move double
+sub rsp, 8 ; sizeof(double)
+movsd [rsp], xmm3
+
+movRegs:
+
+push r11 ; make sure to push the return address back onto the stack
+
+; integer args
+mov r9, r8
+
+; floating point args
+movsd xmm3, xmm2
+; do I need movss or movsd???
+
+mov r8, [r10 + 8h] ; the location of the new generic context into position 2
+
+; now we're set up to just call the actual target
+jmp [r10] ; call the actual target
+         */
+        private static readonly byte[] CallM3Thunk = {
+            0x41, 0x5A, 0x41, 0x5B, 0x41, 0xF6, 0x42, 0x10,
+            0x01, 0x75, 0x08, 0x41, 0x51, 0x49, 0x03, 0x62,
+            0x11, 0xEB, 0x1B, 0x41, 0xF6, 0x42, 0x10, 0x02,
+            0x75, 0x0B, 0x48, 0x83, 0xEC, 0x04, 0xF3, 0x0F,
+            0x11, 0x1C, 0x24, 0xEB, 0x09, 0x48, 0x83, 0xEC,
+            0x08, 0xF2, 0x0F, 0x11, 0x1C, 0x24, 0x41, 0x53,
+            0x4D, 0x89, 0xC1, 0xF2, 0x0F, 0x10, 0xDA, 0x4D,
+            0x8B, 0x42, 0x08, 0x41, 0xFF, 0x22,
+        };
+        #endregion
+
+        /*
+; calling any R thunks means that you must have, immediately following the call instruction,
+; * a pointer to the actual target code
+; * the real generic context for the call (64-bit)
+        */
+        #region Call Replace 1
+        /*
+; our goal is to replace the generic context in position 1 with our own.
+
+; start by figuring out what our new generic context should be
+pop r10 ; load the return address to use for more info
+
+; position 1 is held in rcx; we assume we have a generic context already here
+; so we just overwrite it
+mov rcx, [r10 + 8h] ; the location of the new generic context
+
+; now we're set up to just call the actual target
+jmp [r10] ; call the actual target
+         */
+        private static readonly byte[] CallR1Thunk = {
+            0x41, 0x5A, 0x49, 0x8B, 0x4A, 0x08, 0x41, 0xFF,
+            0x22,
+        };
+        #endregion
+
+        #region Call Replace 2
+        /*
+; our goal is to replace the generic context in position 2 with our own.
+
+; start by figuring out what our new generic context should be
+pop r10 ; load the return address to use for more info
+
+; position 2 is held in rdx; we assume we have a generic context already here
+; so we just overwrite it
+mov rdx, [r10 + 8h] ; the location of the new generic context
+
+; now we're set up to just call the actual target
+jmp [r10] ; call the actual target
+         */
+        private static readonly byte[] CallR2Thunk = {
+            0x41, 0x5A, 0x49, 0x8B, 0x52, 0x08, 0x41, 0xFF,
+            0x22,
+        };
+        #endregion
+
+        #region Call Replace 3
+        /*
+; our goal is to replace the generic context in position 3 with our own.
+
+; start by figuring out what our new generic context should be
+pop r10 ; load the return address to use for more info
+
+; position 3 is held in rdx; we assume we have a generic context already here
+; so we just overwrite it
+mov r8, [r10 + 8h] ; the location of the new generic context
+
+; now we're set up to just call the actual target
+jmp [r10] ; call the actual target
+         */
+        private static readonly byte[] CallR3Thunk = {
+            0x41, 0x5A, 0x4D, 0x8B, 0x42, 0x08, 0x41, 0xFF,
+            0x22,
+        };
+        #endregion
+
+        #endregion
+
         #region Thunk executable segment
         private struct ConstThunkMemory {
             public IntPtr MemStart;
-            public IntPtr A1_thunk;
-            public IntPtr A2_thunk;
-            public IntPtr A3_thunk;
+            public IntPtr Pre1;
+            public IntPtr Pre2;
+            public IntPtr Pre3;
+
         }
 
-        private static uint RoundLength(uint len) {
-            return ((len / 64) + 1) * 64;
+        private static uint RoundLength(uint len, uint amt = 32) {
+            return ((len / amt) + 1) * amt;
         }
 
         private static unsafe ConstThunkMemory BuildThunkMemory() {
-            uint allocSize = RoundLength((uint) Pos1Thunk.Length) + RoundLength((uint) Pos2Thunk.Length) + RoundLength((uint) Pos3Thunk.Length);
+            uint allocSize = 
+                RoundLength((uint) Pre1Thunk.Length) + 
+                RoundLength((uint) Pre2Thunk.Length) + 
+                RoundLength((uint) Pre3Thunk.Length) +
+                RoundLength((uint) CallR1Thunk.Length, 8) +
+                RoundLength((uint) CallR2Thunk.Length, 8) +
+                RoundLength((uint) CallR3Thunk.Length, 8) +
+                RoundLength((uint) CallM2Thunk.Length, 16) +
+                RoundLength((uint) CallM3Thunk.Length, 16);
             IntPtr alloc = DetourHelper.Native.MemAlloc(allocSize);
             DetourHelper.Native.MakeWritable(alloc, allocSize);
 
             byte* data = (byte*) alloc;
-            for (uint i = 0; i < allocSize; i++)
-                data[i] = 0xCC; // fill with 0xCC
+            for (uint i = 0; i < allocSize / 4; i++)
+                ((uint*)data)[i] = 0xCCCCCCCCu; // fill with 0xCC
 
             ConstThunkMemory mem = new ConstThunkMemory { MemStart = alloc };
 
-            fixed (byte* tpThunk = Pos1Thunk) {
-                mem.A1_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pos1Thunk.Length);
-                data += RoundLength((uint) Pos1Thunk.Length);
+            fixed (byte* tpThunk = Pre1Thunk) {
+                mem.Pre1 = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pre1Thunk.Length);
+                data += RoundLength((uint) Pre1Thunk.Length);
             }
 
-            fixed (byte* tpThunk = Pos2Thunk) {
-                mem.A2_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pos2Thunk.Length);
-                data += RoundLength((uint) Pos2Thunk.Length);
+            fixed (byte* tpThunk = Pre2Thunk) {
+                mem.Pre2 = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pre2Thunk.Length);
+                data += RoundLength((uint) Pre2Thunk.Length);
             }
 
-            fixed (byte* tpThunk = Pos3Thunk) {
-                mem.A3_thunk = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pos3Thunk.Length);
+            fixed (byte* tpThunk = Pre3Thunk) {
+                mem.Pre3 = (IntPtr) data;
+                Copy(tpThunk, data, (uint) Pre3Thunk.Length);
+                data += RoundLength((uint) Pre3Thunk.Length);
             }
 
             DetourHelper.Native.MakeExecutable(alloc, allocSize);
@@ -327,18 +549,18 @@ jmp rax
             // TODO: figure out how to determine if we have a return buffer
             if (TakesGenericsFromThis(instance)) {
                 // if we take generics from the this parameter, grab the first given arg
-                return thunkMemory.A1_thunk;
+                return thunkMemory.Pre1;
             }
             if (!instance.IsStatic ^ false /* has return buffer */) {
                 // currently we assume that there there is never a return buffer, so always return the thunk assuming that
                 // if it takes a this arg OR has a return buffer BUT NOT BOTH, grab the second given arg
-                return thunkMemory.A2_thunk;
+                return thunkMemory.Pre2;
             } else if (!instance.IsStatic && false /* has return buffer */) {
                 // if it takes a this arg AND has a return buffer, grab the third given arg
-                return thunkMemory.A3_thunk;
+                return thunkMemory.Pre3;
             }
             // otherwise the context is in the first given arg
-            return thunkMemory.A1_thunk;
+            return thunkMemory.Pre1;
         }
 
         private IntPtr GetHandlerForMethod(MethodBase instance) {
@@ -410,6 +632,10 @@ jmp rax
 
         protected override IntPtr GetRealTarget(GenericPatchInfo patchInfo, MethodBase realSrc, MethodBase origTarget, out object backpatchInfo) {
             throw new NotImplementedException();
+        }
+
+        protected override void BackpatchJump(IntPtr source, IntPtr target, object backpatchInfo) {
+            base.BackpatchJump(source, target, backpatchInfo);
         }
     }
 }
