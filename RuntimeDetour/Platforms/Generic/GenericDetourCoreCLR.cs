@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NET35
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -47,8 +48,6 @@ namespace MonoMod.RuntimeDetour.Platforms {
     // argument and the generic context. This can be reduced to just 3 however; the this object (with the exception
     // of Framework <4.5) is always the first argument, eliminating the need for one of the bodies, and the generic
     // cookie pointer for both the MethodDesc and MethodTable cases are in the same place, removing another two.
-
-#if !NET35
 
 #if !MONOMOD_INTERNAL
     public
@@ -587,5 +586,5 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         protected abstract MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc);
     }
-#endif
 }
+#endif
