@@ -630,7 +630,7 @@ jmp [r10] ; call the actual target
             DetourHelper.Native.MemFree(data.Extra);
         }
 
-        protected override IntPtr GetRealTarget(GenericPatchInfo patchInfo, MethodBase realSrc, MethodBase origTarget, out object backpatchInfo) {
+        protected override IntPtr GetRealTarget(GenericPatchInfo patchInfo, MethodBase realSrc, out object backpatchInfo) {
             throw new NotImplementedException();
         }
 

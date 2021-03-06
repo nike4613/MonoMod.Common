@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -46,6 +47,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
     // argument and the generic context. This can be reduced to just 3 however; the this object (with the exception
     // of Framework <4.5) is always the first argument, eliminating the need for one of the bodies, and the generic
     // cookie pointer for both the MethodDesc and MethodTable cases are in the same place, removing another two.
+
+#if !NET35
 
 #if !MONOMOD_INTERNAL
     public
@@ -175,11 +178,16 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         MT->IsSharedByGenericInstantiations() is whether or not this is the canonical instance
          */
         #endregion
-
-        #region Thunk Jump Targets
         private static MethodBase GetMethodOnSelf(string name)
             => typeof(GenericDetourCoreCLR)
                         .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static IntPtr GetPtrForCtx(ref IntPtr ctx, string memberName)
+            => ctx != IntPtr.Zero
+                    ? ctx
+                    : (ctx = GetMethodOnSelf(memberName).GetNativeStart());
+
+        #region Thunk Jump Targets
 
         protected virtual void BackpatchJump(IntPtr source, IntPtr target, object backpatchInfo) {
             IDetourNativePlatform platform = DetourHelper.Native;
@@ -191,9 +199,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
         protected static IntPtr FixupForThisPtrContext
-            => fixupForThisPtrCtx != IntPtr.Zero
-                    ? fixupForThisPtrCtx
-                    : (fixupForThisPtrCtx = GetMethodOnSelf(nameof(FindAndFixupThunkForThisPtrContext)).GetNativeStart());
+            => GetPtrForCtx(ref fixupForThisPtrCtx, nameof(FindAndFixupThunkForThisPtrContext));
 
         [MethodImpl((MethodImplOptions)512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForThisPtrContext(object thisptr, int index, IntPtr origStart) {
@@ -210,9 +216,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr fixupForMethodDescContext = IntPtr.Zero;
         protected static IntPtr FixupForMethodDescContext
-            => fixupForMethodDescContext != IntPtr.Zero
-                    ? fixupForMethodDescContext
-                    : (fixupForMethodDescContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodDescContext)).GetNativeStart());
+            => GetPtrForCtx(ref fixupForMethodDescContext, nameof(FindAndFixupThunkForMethodDescContext));
 
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForMethodDescContext(IntPtr methodDesc, int index, IntPtr origStart) {
@@ -229,9 +233,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr fixupForMethodTableContext = IntPtr.Zero;
         protected static IntPtr FixupForMethodTableContext
-            => fixupForMethodTableContext != IntPtr.Zero
-                    ? fixupForMethodTableContext
-                    : (fixupForMethodTableContext = GetMethodOnSelf(nameof(FindAndFixupThunkForMethodTableContext)).GetNativeStart());
+            => GetPtrForCtx(ref fixupForMethodTableContext, nameof(FindAndFixupThunkForMethodTableContext));
 
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr FindAndFixupThunkForMethodTableContext(IntPtr methodTable, int index, IntPtr origStart) {
@@ -248,9 +250,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr patchResolveFailureTarget = IntPtr.Zero;
         private static IntPtr PatchResolveFailureTarget
-            => patchResolveFailureTarget != IntPtr.Zero
-                    ? patchResolveFailureTarget
-                    : (patchResolveFailureTarget = GetMethodOnSelf(nameof(FailedToResolvePatchTarget)).GetNativeStart());
+            => GetPtrForCtx(ref patchResolveFailureTarget, nameof(FailedToResolvePatchTarget));
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static void FailedToResolvePatchTarget() {
             throw new Exception("Could not resolve patch target; see mmdbglog for more information");
@@ -259,9 +259,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr unknownMethodAbi = IntPtr.Zero;
         protected static IntPtr UnknownMethodABI
-            => unknownMethodAbi != IntPtr.Zero
-                    ? unknownMethodAbi
-                    : (unknownMethodAbi = GetMethodOnSelf(nameof(UnknownMethodABIResolve)).GetNativeStart());
+            => GetPtrForCtx(ref unknownMethodAbi, nameof(UnknownMethodABIResolve));
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static IntPtr UnknownMethodABIResolve() {
             return UnknownMethodABITarget;
@@ -269,12 +267,52 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private static IntPtr unknownMethodAbiTarget = IntPtr.Zero;
         private static IntPtr UnknownMethodABITarget
-            => unknownMethodAbiTarget != IntPtr.Zero
-                    ? unknownMethodAbiTarget
-                    : (unknownMethodAbiTarget = GetMethodOnSelf(nameof(UnknownMethodABIThrow)).GetNativeStart());
+            => GetPtrForCtx(ref unknownMethodAbiTarget, nameof(UnknownMethodABIThrow));
         [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
         private static void UnknownMethodABIThrow() {
             throw new Exception("Unknown ABI for generic method instance");
+        }
+        #endregion
+
+        #region Call thunk context adjustment
+        private static IntPtr fixCtxThis2MTTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxThis2MTTarget
+            => GetPtrForCtx(ref fixCtxThis2MTTarget, nameof(FixCtxThis2MT));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxThis2MT(object ctx, int index) {
+            return Instance.ConvertThis2MTCached(ctx, index);
+        }
+
+        private static IntPtr fixCtxMT2MTTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMT2MTTarget
+            => GetPtrForCtx(ref fixCtxMT2MTTarget, nameof(FixCtxMT2MT));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMT2MT(IntPtr ctx, int index) {
+            return Instance.ConvertMT2MTCached(ctx, index);
+        }
+
+        private static IntPtr fixCtxMT2MDTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMT2MDTarget
+            => GetPtrForCtx(ref fixCtxMT2MDTarget, nameof(FixCtxMT2MD));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMT2MD(IntPtr ctx, int index) {
+            return Instance.ConvertMT2MDCached(ctx, index);
+        }
+
+        private static IntPtr fixCtxMD2MTTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMD2MTTarget
+            => GetPtrForCtx(ref fixCtxMD2MTTarget, nameof(FixCtxMD2MT));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMD2MT(IntPtr ctx, int index) {
+            return Instance.ConvertMD2MTCached(ctx, index);
+        }
+
+        private static IntPtr fixCtxMD2MDTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMD2MDTarget
+            => GetPtrForCtx(ref fixCtxMD2MDTarget, nameof(FixCtxMD2MD));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMD2MD(IntPtr ctx, int index) {
+            return Instance.ConvertMD2MDCached(ctx, index);
         }
         #endregion
 
@@ -385,9 +423,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         protected GenericPatchInfo GetPatchInfoFromIndex(int index) {
-            lock (genericPatchesLockObject) {
-                return genericPatches[index];
-            }
+            return genericPatches[index];
         }
 
         void IGenericDetourPlatform.RemovePatch(int handle)
@@ -414,6 +450,92 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         protected IntPtr FindTargetForThisPtrContext(object thisptr, int index, out object backpatchInfo) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
+            MethodBase realMethod = RealInstFromThis(thisptr, patchInfo);
+
+            return GetRealTarget(patchInfo, realMethod, out backpatchInfo);
+        }
+
+        protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index, out object backpatchInfo) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
+
+            MethodBase realMethod = MethodBase.GetMethodFromHandle(handle);
+
+            return GetRealTarget(patchInfo, realMethod, out backpatchInfo);
+        }
+
+        protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index, out object backpatchInfo) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            MethodBase realMethod = RealInstFromMT(methodTable, patchInfo);
+
+            return GetRealTarget(patchInfo, realMethod, out backpatchInfo);
+        }
+        #endregion
+
+        protected abstract IntPtr GetRealTarget(GenericPatchInfo patch, MethodBase realSrc, out object backpatchInfo);
+
+        #region Actual Conversions
+        private class IntPtrWrapper {
+            public IntPtr Value = IntPtr.Zero;
+        }
+
+        private readonly ConditionalWeakTable<object, IntPtrWrapper> thisConvCache = new ConditionalWeakTable<object, IntPtrWrapper>();
+        private IntPtr ConvertThis2MTCached(object thisptr, int index) {
+            IntPtrWrapper wrap = thisConvCache.GetOrCreateValue(thisptr);
+            if (wrap.Value == IntPtr.Zero)
+                wrap.Value = ConvertThis2MT(thisptr, index);
+            return wrap.Value;
+        }
+        private IntPtr ConvertThis2MT(object thisptr, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromThis(thisptr, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMT(target);
+        }
+
+        private readonly ConcurrentDictionary<IntPtr, IntPtr> otherCtxConvCache = new ConcurrentDictionary<IntPtr, IntPtr>();
+        private IntPtr ConvertMT2MTCached(IntPtr ctx, int index) {
+            return otherCtxConvCache.GetOrAdd(ctx, c => ConvertMT2MT(c, index));
+        }
+        private IntPtr ConvertMT2MT(IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMT(ctx, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMT(target);
+        }
+        private IntPtr ConvertMT2MDCached(IntPtr ctx, int index) {
+            return otherCtxConvCache.GetOrAdd(ctx, c => ConvertMT2MD(c, index));
+        }
+        private IntPtr ConvertMT2MD(IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMT(ctx, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMD(target);
+        }
+        private IntPtr ConvertMD2MTCached(IntPtr ctx, int index) {
+            return otherCtxConvCache.GetOrAdd(ctx, c => ConvertMD2MT(c, index));
+        }
+        private IntPtr ConvertMD2MT(IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMD(ctx);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMT(target);
+        }
+        private IntPtr ConvertMD2MDCached(IntPtr ctx, int index) {
+            return otherCtxConvCache.GetOrAdd(ctx, c => ConvertMD2MD(c, index));
+        }
+        private IntPtr ConvertMD2MD(IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMD(ctx);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMD(target);
+        }
+        #endregion
+
+        #region Instantiation Lookup
+        private MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
             Type origType = origSrc.DeclaringType;
             Type realType = thisptr.GetType();
@@ -433,24 +555,15 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             RuntimeMethodHandle origHandle = origSrc.MethodHandle;
             RuntimeTypeHandle realTypeHandle = realType.TypeHandle;
 
-            MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
-
-            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
+            return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected IntPtr FindTargetForMethodDescContext(IntPtr methodDesc, int index, out object backpatchInfo) {
-            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
-
+        private MethodBase RealInstFromMD(IntPtr methodDesc) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
-
-            MethodBase realMethod = MethodBase.GetMethodFromHandle(handle);
-
-            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
+            return MethodBase.GetMethodFromHandle(handle);
         }
 
-        protected IntPtr FindTargetForMethodTableContext(IntPtr methodTable, int index, out object backpatchInfo) {
-            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
-
+        private MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
 
             Type realType = netPlatform.GetTypeFromNativeHandle(methodTable);
@@ -460,12 +573,19 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             RuntimeMethodHandle origHandle = origSrc.MethodHandle;
             RuntimeTypeHandle realTypeHandle = realType.TypeHandle;
 
-            MethodBase realMethod = MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
-
-            return GetRealTarget(patchInfo, realMethod, patchInfo.TargetMethod, out backpatchInfo);
+            return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected abstract IntPtr GetRealTarget(GenericPatchInfo patch, MethodBase realSrc, MethodBase origTarget, out object backpatchInfo);
+        private IntPtr RealTargetToMD(MethodBase method) {
+            return method.MethodHandle.Value;
+        }
+
+        private IntPtr RealTargetToMT(MethodBase method) {
+            return method.DeclaringType.TypeHandle.Value;
+        }
         #endregion
+
+        protected abstract MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc);
     }
+#endif
 }

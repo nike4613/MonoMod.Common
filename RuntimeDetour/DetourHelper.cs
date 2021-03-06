@@ -111,7 +111,9 @@ namespace MonoMod.RuntimeDetour {
                         } else {
                             if (PlatformHelper.Is(Platform.Bits64)) {
                                 if (Runtime is DetourRuntimeNETCore30Platform) {
+#if !NET35
                                     return _Generic = new GenericDetourCoreCLRWinX64();
+#endif
                                 }
                             }
                         }
