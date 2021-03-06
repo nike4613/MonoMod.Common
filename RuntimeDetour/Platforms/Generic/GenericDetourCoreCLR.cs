@@ -134,6 +134,11 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return method.GetGenericArguments().Any(TypeIsGenericShared);
         }
 
+        protected static bool MethodRequiresReturnBuffer(MethodBase method) {
+            // TODO: implement
+            throw new NotImplementedException();
+        }
+
         /*
 //*******************************************************************************
 BOOL MethodDesc::IsSharedByGenericInstantiations()
@@ -281,6 +286,13 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static IntPtr FixCtxThis2MT(object ctx, int index) {
             return Instance.ConvertThis2MTCached(ctx, index);
         }
+        private static IntPtr fixCtxThis2MDTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxThis2MDTarget
+            => GetPtrForCtx(ref fixCtxThis2MDTarget, nameof(FixCtxThis2MD));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxThis2MD(object ctx, int index) {
+            return Instance.ConvertThis2MDCached(ctx, index);
+        }
 
         private static IntPtr fixCtxMT2MTTarget = IntPtr.Zero;
         protected static IntPtr FixCtxMT2MTTarget
@@ -352,7 +364,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
 
         private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart, int index) {
             NativeDetourData detourData = PatchInstantiation(decl, instance, codeStart, index);
-            InstantiationPatch patch = new InstantiationPatch(instance, detourData);
+            InstantiationPatch patch = new(instance, detourData);
             InstantiationPatch? existing = null;
             lock (patchInfo) {
                 if (patchInfo.PatchedInstantiations.TryGetValue(instance, out InstantiationPatch existingnn)) {
@@ -384,7 +396,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         protected class GenericPatchInfo {
             public readonly MethodBase SourceMethod;
             public readonly MethodBase TargetMethod;
-            public readonly Dictionary<MethodBase, InstantiationPatch> PatchedInstantiations = new Dictionary<MethodBase, InstantiationPatch>();
+            public readonly Dictionary<MethodBase, InstantiationPatch> PatchedInstantiations = new();
 
             public GenericPatchInfo(MethodBase source, MethodBase target) {
                 SourceMethod = source;
@@ -392,10 +404,10 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             }
         }
 
-        private readonly object genericPatchesLockObject = new object();
-        private readonly List<GenericPatchInfo> genericPatches = new List<GenericPatchInfo>();
+        private readonly object genericPatchesLockObject = new();
+        private readonly List<GenericPatchInfo> genericPatches = new();
         private int lastCleared = 0;
-        private readonly Dictionary<MethodBase, int> patchedMethodIndexes = new Dictionary<MethodBase, int>();
+        private readonly Dictionary<MethodBase, int> patchedMethodIndexes = new();
 
         int IGenericDetourPlatform.AddPatch(MethodBase from, MethodBase to)
             => AddMethodPatch(from, to);
@@ -404,7 +416,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             // TODO: allow multi-patching, whether here or somewhere else
             lock (genericPatchesLockObject) {
                 int index = lastCleared;
-                GenericPatchInfo patchInfo = new GenericPatchInfo(from, to);
+                GenericPatchInfo patchInfo = new(from, to);
                 if (index >= genericPatches.Count) {
                     genericPatches.Add(patchInfo);
                 } else {
@@ -480,12 +492,11 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             public IntPtr Value = IntPtr.Zero;
         }
 
-        private readonly ConditionalWeakTable<object, IntPtrWrapper> thisConvCache = new ConditionalWeakTable<object, IntPtrWrapper>();
+        // TODO: when unpatching a patch, clear the associated index entry
+        private readonly ConditionalWeakTable<object, ConcurrentDictionary<int, IntPtr>> thisConvCache = new();
         private IntPtr ConvertThis2MTCached(object thisptr, int index) {
-            IntPtrWrapper wrap = thisConvCache.GetOrCreateValue(thisptr);
-            if (wrap.Value == IntPtr.Zero)
-                wrap.Value = ConvertThis2MT(thisptr, index);
-            return wrap.Value;
+            ConcurrentDictionary<int, IntPtr> lookup = thisConvCache.GetOrCreateValue(thisptr);
+            return lookup.GetOrAdd(index, i => ConvertThis2MT(thisptr, index));
         }
         private IntPtr ConvertThis2MT(object thisptr, int index) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
@@ -493,8 +504,19 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
             return RealTargetToMT(target);
         }
+        private IntPtr ConvertThis2MDCached(object thisptr, int index) {
+            ConcurrentDictionary<int, IntPtr> lookup = thisConvCache.GetOrCreateValue(thisptr);
+            return lookup.GetOrAdd(index, i => ConvertThis2MD(thisptr, index));
+        }
+        private IntPtr ConvertThis2MD(object thisptr, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromThis(thisptr, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMD(target);
+        }
 
-        private readonly ConcurrentDictionary<IntPtr, IntPtr> otherCtxConvCache = new ConcurrentDictionary<IntPtr, IntPtr>();
+        // TODO: figure out how to clear the correct parts of this cache when unpatching
+        private readonly ConcurrentDictionary<IntPtr, IntPtr> otherCtxConvCache = new();
         private IntPtr ConvertMT2MTCached(IntPtr ctx, int index) {
             return otherCtxConvCache.GetOrAdd(ctx, c => ConvertMT2MT(c, index));
         }

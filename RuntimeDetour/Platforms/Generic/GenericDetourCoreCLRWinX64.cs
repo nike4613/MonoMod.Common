@@ -36,6 +36,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
         // it seems our thunks *require* us to set up stack frames correctly, and allocate at least enough space for the parameters to call the handlers
 
         #region Thunk definitions
+
+        #region call_p1
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -110,6 +112,8 @@ jmp [r10]
             0x4C, 0x8B, 0x55, 0xD8, 0x48, 0x8D, 0x65, 0x00,
             0x5D, 0x4D, 0x8B, 0x5A, 0x08, 0x41, 0xFF, 0x22,
         };
+        #endregion
+        #region call_p2
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -184,6 +188,8 @@ jmp [r10]
             0x48, 0x8D, 0x65, 0x00, 0x5D, 0x4D, 0x8B, 0x5A,
             0x08, 0x41, 0xFF, 0x22,
         };
+        #endregion
+        #region call_p3
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -258,6 +264,8 @@ jmp [r10]
             0x48, 0x8D, 0x65, 0x00, 0x5D, 0x4D, 0x8B, 0x5A,
             0x08, 0x41, 0xFF, 0x22,
         };
+        #endregion
+        #region cc g g
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -277,6 +285,8 @@ jmp r11
         private static readonly byte[] cconv_g_g = {
             0x48, 0x89, 0xC1, 0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region cc rg rg
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -296,6 +306,8 @@ jmp r11
         private static readonly byte[] cconv_rg_rg = {
             0x48, 0x89, 0xC2, 0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region cc t g
         /*
 ; the thunk data must have the following data
 ; * a pointer to the context conversion
@@ -379,6 +391,8 @@ jmp r11 ; call the actual target
             0xD1, 0xF2, 0x0F, 0x10, 0xC8, 0x48, 0x89, 0xC1,
             0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region cc tg g
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -399,6 +413,8 @@ jmp r11
         private static readonly byte[] cconv_tg_g = {
             0x48, 0x89, 0xCA, 0x48, 0x89, 0xC1, 0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region cc tr rg
         /*
 ; calling this thunk means that you must have, immediately following the call instruction,
 ; * a pointer to the context conversion
@@ -481,6 +497,8 @@ jmp r11 ; call the actual target
             0x89, 0xC8, 0x48, 0x89, 0xD1, 0x48, 0x89, 0xC2,
             0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region cc trg rg
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -503,6 +521,8 @@ jmp r11
             0x49, 0x89, 0xC8, 0x48, 0x89, 0xD1, 0x48, 0x89,
             0xC2, 0x41, 0xFF, 0xE3,
         };
+        #endregion
+        #region pre1
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -568,6 +588,8 @@ jmp rax
             0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48, 0x8D,
             0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
+        #endregion
+        #region pre2
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -634,6 +656,8 @@ jmp rax
             0xF0, 0x4C, 0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D,
             0xE0, 0x48, 0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
+        #endregion
+        #region pre3
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -700,21 +724,51 @@ jmp rax
             0xF0, 0x4C, 0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D,
             0xE0, 0x48, 0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
+        #endregion
+
+        #region jmp block
+        private static readonly byte[] jmp_long = {
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+        };
+        #endregion
 
         #endregion
 
         #region Thunk executable segment
         private struct ConstThunkMemory {
             public IntPtr MemStart;
+
             public IntPtr Pre1;
             public IntPtr Pre2;
             public IntPtr Pre3;
+
             public IntPtr CC_TRG_RG;
             public IntPtr CC_TR_RG;
             public IntPtr CC_RG_RG;
             public IntPtr CC_G_G;
             public IntPtr CC_TG_G;
             public IntPtr CC_T_G;
+
+            public IntPtr C1_T_MT;
+            public IntPtr C1_T_MD;
+
+            public IntPtr C1_MT_MT;
+            public IntPtr C1_MT_MD;
+            public IntPtr C1_MD_MT;
+            public IntPtr C1_MD_MD;
+
+            public IntPtr C2_MT_MT;
+            public IntPtr C2_MT_MD;
+            public IntPtr C2_MD_MT;
+            public IntPtr C2_MD_MD;
+
+            public IntPtr C3_MD_MT;
+            public IntPtr C3_MD_MD;
         }
 
         private static uint RoundLength(uint len, uint amt = 16) {
@@ -730,7 +784,14 @@ jmp rax
                 RoundLength((uint) cconv_rg_rg.Length) +
                 RoundLength((uint) cconv_tg_g.Length) +
                 RoundLength((uint) cconv_trg_rg.Length) +
-                RoundLength((uint) cconv_tr_rg.Length);
+                RoundLength((uint) cconv_tr_rg.Length) +
+                RoundLength((uint) cconv_t_g.Length) + 
+                (RoundLength((uint) call_p1_form.Length) * 6) + // there are 6 variants of the C1 thunk
+                (RoundLength((uint) call_p2_form.Length) * 4) + //           4 variants of the C2 thunk
+                (RoundLength((uint) call_p3_form.Length) * 2) + //       and 2 variants of the C3 thunk
+                RoundLength(6u * 6) + // there are 6 fixup targets, which requires 6 6-byte absolute jumps
+                (8u * 6);             //       and 6 absolute jump targets
+
             IntPtr alloc = DetourHelper.Native.MemAlloc(allocSize);
             DetourHelper.Native.MakeWritable(alloc, allocSize);
 
@@ -738,25 +799,99 @@ jmp rax
             for (uint i = 0; i < allocSize / 4; i++)
                 ((uint*)data)[i] = 0xCCCCCCCCu; // fill with 0xCC
 
-            ConstThunkMemory mem = new ConstThunkMemory { MemStart = alloc };
+            ConstThunkMemory mem = new() { MemStart = alloc };
 
-            /*fixed (byte* tpThunk = Pre1Thunk) {
-                mem.Pre1 = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pre1Thunk.Length);
-                data += RoundLength((uint) Pre1Thunk.Length);
+            static unsafe byte* CopyToData(out IntPtr memTarget, byte* data, byte[] thunkSrc) {
+                fixed (byte* thunk = thunkSrc) {
+                    memTarget = (IntPtr) data;
+                    Copy(thunk, data, (uint) thunkSrc.Length);
+                }
+                return data + RoundLength((uint) thunkSrc.Length);
             }
 
-            fixed (byte* tpThunk = Pre2Thunk) {
-                mem.Pre2 = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pre2Thunk.Length);
-                data += RoundLength((uint) Pre2Thunk.Length);
+            data = CopyToData(out mem.Pre1, data, precall_1);
+            data = CopyToData(out mem.Pre2, data, precall_2);
+            data = CopyToData(out mem.Pre3, data, precall_3);
+            data = CopyToData(out mem.CC_G_G, data, cconv_g_g);
+            data = CopyToData(out mem.CC_RG_RG, data, cconv_rg_rg);
+            data = CopyToData(out mem.CC_TG_G, data, cconv_tg_g);
+            data = CopyToData(out mem.CC_TRG_RG, data, cconv_trg_rg);
+            data = CopyToData(out mem.CC_TR_RG, data, cconv_tr_rg);
+            data = CopyToData(out mem.CC_T_G, data, cconv_t_g);
+
+            // copy in all variants of C1
+            data = CopyToData(out mem.C1_T_MT, data, call_p1_form);
+            data = CopyToData(out mem.C1_T_MD, data, call_p1_form);
+            data = CopyToData(out mem.C1_MT_MT, data, call_p1_form);
+            data = CopyToData(out mem.C1_MT_MD, data, call_p1_form);
+            data = CopyToData(out mem.C1_MD_MT, data, call_p1_form);
+            data = CopyToData(out mem.C1_MD_MD, data, call_p1_form);
+            // all variants of C2
+            data = CopyToData(out mem.C2_MT_MT, data, call_p2_form);
+            data = CopyToData(out mem.C2_MT_MD, data, call_p2_form);
+            data = CopyToData(out mem.C2_MD_MT, data, call_p2_form);
+            data = CopyToData(out mem.C2_MD_MD, data, call_p2_form);
+            // all variants of C3
+            data = CopyToData(out mem.C3_MD_MT, data, call_p3_form);
+            data = CopyToData(out mem.C3_MD_MD, data, call_p3_form);
+
+            // calculate offsets to jump block offsets
+            int rel_t_mt = 2;
+            int rel_t_md = rel_t_mt + 6;
+            int rel_mt_mt = rel_t_md + 6;
+            int rel_mt_md = rel_mt_mt + 6;
+            int rel_md_mt = rel_mt_md + 6;
+            int rel_md_md = rel_md_mt + 6;
+            // copy in jump block
+            data = CopyToData(out IntPtr jumpBlock, data, jmp_long);
+
+            {
+                static void WriteOffset(IntPtr fbase, int foffs, IntPtr tbase, int toffs) {
+                    long diff = (long) tbase - (long) fbase;
+                    diff -= foffs;
+                    diff += toffs;
+                    diff -= 4; // sizeof the offset (since its relative to the end of the insn
+
+                    fbase.Write(ref foffs, (uint) (int) diff);
+                }
+
+                // write offsets to jump block into C* variants
+                WriteOffset(mem.C1_T_MT, call_p1_from_fix_fn_offs, jumpBlock, rel_t_mt - 2);
+                WriteOffset(mem.C1_T_MD, call_p1_from_fix_fn_offs, jumpBlock, rel_t_md - 2);
+                WriteOffset(mem.C1_MT_MT, call_p1_from_fix_fn_offs, jumpBlock, rel_mt_mt - 2);
+                WriteOffset(mem.C1_MT_MD, call_p1_from_fix_fn_offs, jumpBlock, rel_mt_md - 2);
+                WriteOffset(mem.C1_MD_MT, call_p1_from_fix_fn_offs, jumpBlock, rel_md_mt - 2);
+                WriteOffset(mem.C1_MD_MD, call_p1_from_fix_fn_offs, jumpBlock, rel_md_md - 2);
+
+                WriteOffset(mem.C2_MT_MT, call_p2_from_fix_fn_offs, jumpBlock, rel_mt_mt - 2);
+                WriteOffset(mem.C2_MT_MD, call_p2_from_fix_fn_offs, jumpBlock, rel_mt_md - 2);
+                WriteOffset(mem.C2_MD_MT, call_p2_from_fix_fn_offs, jumpBlock, rel_md_mt - 2);
+                WriteOffset(mem.C2_MD_MD, call_p2_from_fix_fn_offs, jumpBlock, rel_md_md - 2);
+
+                WriteOffset(mem.C3_MD_MT, call_p3_from_fix_fn_offs, jumpBlock, rel_md_mt - 2);
+                WriteOffset(mem.C3_MD_MD, call_p3_from_fix_fn_offs, jumpBlock, rel_md_md - 2);
             }
 
-            fixed (byte* tpThunk = Pre3Thunk) {
-                mem.Pre3 = (IntPtr) data;
-                Copy(tpThunk, data, (uint) Pre3Thunk.Length);
-                data += RoundLength((uint) Pre3Thunk.Length);
-            }*/
+            {
+                static void WriteOffset(IntPtr ptr, int offsLoc, int offs) {
+                    ptr.Write(ref offsLoc, (uint) (offs - offsLoc - 4));
+                }
+
+                // write jump targets and offsets
+                int offs = (int) (data - ((byte*) jumpBlock));
+                WriteOffset(jumpBlock, rel_t_mt, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxThis2MTTarget);
+                WriteOffset(jumpBlock, rel_t_md, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxThis2MDTarget);
+                WriteOffset(jumpBlock, rel_mt_mt, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMT2MTTarget);
+                WriteOffset(jumpBlock, rel_mt_md, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMT2MDTarget);
+                WriteOffset(jumpBlock, rel_md_mt, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMD2MTTarget);
+                WriteOffset(jumpBlock, rel_md_md, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMD2MDTarget);
+            }
 
             DetourHelper.Native.MakeExecutable(alloc, allocSize);
             DetourHelper.Native.FlushICache(alloc, allocSize);
@@ -851,6 +986,8 @@ jmp rax
         }
 
         protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
+            // TODO: correctly handle the case where this is a unique instantiation
+            
             IntPtr thunk = GetThunkForMethod(methodInstance);
             IntPtr handler = GetHandlerForMethod(methodInstance);
             CallType callType = FindCallType(codeStart, thunk);
@@ -912,6 +1049,7 @@ jmp rax
         }
 
         protected override void BackpatchJump(IntPtr source, IntPtr target, object backpatchInfo) {
+            // TODO: change this to repatch with the appropriate call thunks
             base.BackpatchJump(source, target, backpatchInfo);
         }
 
