@@ -10,7 +10,7 @@ namespace MonoMod.RuntimeDetour {
 #endif
     interface IGenericDetourPlatform {
         // there will be an implementation of this for each native/runtime combination
-        int AddPatch(MethodBase from, MethodBase to);
+        int AddPatch(MethodBase from, MethodInfo to);
         void RemovePatch(int handle);
     }
 }

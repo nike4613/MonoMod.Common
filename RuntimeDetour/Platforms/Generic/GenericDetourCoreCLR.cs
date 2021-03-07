@@ -385,10 +385,10 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         protected class GenericPatchInfo {
             public readonly int Index;
             public readonly MethodBase SourceMethod;
-            public readonly MethodBase TargetMethod;
+            public readonly MethodInfo TargetMethod;
             public readonly Dictionary<MethodBase, InstantiationPatch> PatchedInstantiations = new();
 
-            public GenericPatchInfo(int index, MethodBase source, MethodBase target) {
+            public GenericPatchInfo(int index, MethodBase source, MethodInfo target) {
                 Index = index;
                 SourceMethod = source;
                 TargetMethod = target;
@@ -400,10 +400,10 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private int lastCleared = 0;
         private readonly Dictionary<MethodBase, int> patchedMethodIndexes = new();
 
-        int IGenericDetourPlatform.AddPatch(MethodBase from, MethodBase to)
+        int IGenericDetourPlatform.AddPatch(MethodBase from, MethodInfo to)
             => AddMethodPatch(from, to);
 
-        protected int AddMethodPatch(MethodBase from, MethodBase to) {
+        protected int AddMethodPatch(MethodBase from, MethodInfo to) {
             // TODO: allow multi-patching, whether here or somewhere else
             // TODO: validate that provided methods are compatible
             lock (genericPatchesLockObject) {
@@ -598,7 +598,27 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
         #endregion
 
-        protected abstract MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc);
+        protected virtual MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc) {
+            return BuildInstantiationForMethod(patch.TargetMethod, realSrc);
+        }
+
+        protected virtual MethodBase BuildInstantiationForMethod(MethodInfo def, MethodBase instance) {
+            //   for now, we'll support only one kind of transformation: into a method with all of the arguments
+            // in order
+
+            List<Type> typeArguments = new(def.GetGenericArguments().Length);
+
+            if (instance.DeclaringType?.IsGenericType ?? false) {
+                typeArguments.AddRange(instance.DeclaringType.GetGenericArguments());
+            }
+
+            if (instance.IsGenericMethod) {
+                typeArguments.AddRange(instance.GetGenericArguments());
+            }
+
+            return def.MakeGenericMethod(typeArguments.ToArray());
+        }
+
     }
 }
 #endif

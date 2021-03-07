@@ -1196,14 +1196,6 @@ jmp rax
             DetourHelper.Native.MakeExecutable(detourData);
             DetourHelper.Native.FlushICache(detourData);
         }
-
-        private MethodBase BuildInstantiationForMethod(MethodBase def, MethodBase instance) {
-            throw new NotImplementedException();
-        }
-
-        protected override MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc) {
-            throw new NotImplementedException();
-        }
     }
 }
 #endif
