@@ -1,5 +1,6 @@
 ﻿#if !NET35
 using MonoMod.RuntimeDetour;
+using MonoMod.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -957,25 +958,37 @@ jmp rax
                 + 2u // call insn size
                 + 8u; // call abs address
 
-        private IntPtr GetThunkForMethod(MethodBase instance) {
-            // TODO: figure out how to determine if we have a return buffer
-            if (TakesGenericsFromThis(instance)) {
-                // if we take generics from the this parameter, grab the first given arg
-                return thunkMemory.Pre1;
-            }
-            if (!instance.IsStatic ^ false /* has return buffer */) {
-                // currently we assume that there there is never a return buffer, so always return the thunk assuming that
-                // if it takes a this arg OR has a return buffer BUT NOT BOTH, grab the second given arg
-                return thunkMemory.Pre2;
-            } else if (!instance.IsStatic && false /* has return buffer */) {
-                // if it takes a this arg AND has a return buffer, grab the third given arg
-                return thunkMemory.Pre3;
-            }
-            // otherwise the context is in the first given arg
-            return thunkMemory.Pre1;
+        private enum GenericContextPosision {
+            Arg1, Arg2, Arg3
         }
 
-        private IntPtr GetHandlerForMethod(MethodBase instance) {
+        private static GenericContextPosision GetGenericContextPosition(MethodBase instance) {
+            if (TakesGenericsFromThis(instance)) {
+                // if we take generics from the this parameter, grab the first given arg
+                return GenericContextPosision.Arg1;
+            }
+            bool needsReturnBuffer = MethodRequiresReturnBuffer(instance);
+            if (!instance.IsStatic ^ needsReturnBuffer) {
+                // currently we assume that there there is never a return buffer, so always return the thunk assuming that
+                // if it takes a this arg OR has a return buffer BUT NOT BOTH, grab the second given arg
+                return GenericContextPosision.Arg2;
+            } else if (!instance.IsStatic && needsReturnBuffer) {
+                // if it takes a this arg AND has a return buffer, grab the third given arg
+                return GenericContextPosision.Arg3;
+            }
+            // otherwise the context is in the first given arg
+            return GenericContextPosision.Arg1;
+        }
+
+        private IntPtr GetPrecallThunkForMethod(MethodBase instance)
+            => GetGenericContextPosition(instance) switch {
+                GenericContextPosision.Arg1 => thunkMemory.Pre1,
+                GenericContextPosision.Arg2 => thunkMemory.Pre2,
+                GenericContextPosision.Arg3 => thunkMemory.Pre3,
+                _ => throw new InvalidOperationException()
+            };
+
+        private IntPtr GetPrecallHandlerForMethod(MethodBase instance) {
             if (TakesGenericsFromThis(instance))
                 return FixupForThisPtrContext;
             if (RequiresMethodTableArg(instance))
@@ -988,8 +1001,8 @@ jmp rax
         protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
             // TODO: correctly handle the case where this is a unique instantiation
             
-            IntPtr thunk = GetThunkForMethod(methodInstance);
-            IntPtr handler = GetHandlerForMethod(methodInstance);
+            IntPtr thunk = GetPrecallThunkForMethod(methodInstance);
+            IntPtr handler = GetPrecallHandlerForMethod(methodInstance);
             CallType callType = FindCallType(codeStart, thunk);
             uint callLen = GetCallTypeSize(callType);
 
@@ -997,11 +1010,11 @@ jmp rax
             IntPtr dataBackup = DetourHelper.Native.MemAlloc(callLen);
             Copy(codeStart, dataBackup, callLen);
 
-            NativeDetourData detourData = new NativeDetourData {
+            NativeDetourData detourData = new() {
                 Method = codeStart,
                 Target = thunk,
                 Type = (byte)callType,
-                Size = callLen,
+                Size = Math.Max(callLen, CallsiteMaxPatchSize),
                 Extra = dataBackup
             };
 
@@ -1044,13 +1057,148 @@ jmp rax
             DetourHelper.Native.MemFree(data.Extra);
         }
 
-        protected override IntPtr GetRealTarget(GenericPatchInfo patchInfo, MethodBase realSrc, out object backpatchInfo) {
-            throw new NotImplementedException();
+        private const int CallsiteMaxPatchSize =
+            6 + // call instruction
+            8 + // context conversion function
+            8 + // real method target
+            4 + // index
+            3 + // additional data used by some call handlers
+            8;  // the real call target, if its an absolute call
+
+        private IntPtr GetCallThunkForMethod(MethodBase srcMethod, MethodBase target) {
+            if (TakesGenericsFromThis(srcMethod)) {
+                if (RequiresMethodDescArg(target)) {
+                    return thunkMemory.C1_T_MD;
+                } else if (RequiresMethodTableArg(target)) {
+                    return thunkMemory.C1_T_MT;
+                } else {
+                    throw new InvalidOperationException("Unknown/unprocessable generic ABI for target");
+                }
+            }
+            if (RequiresMethodDescArg(srcMethod)) {
+                if (RequiresMethodDescArg(target)) {
+                    return GetGenericContextPosition(srcMethod) switch {
+                        GenericContextPosision.Arg1 => thunkMemory.C1_MD_MD,
+                        GenericContextPosision.Arg2 => thunkMemory.C2_MD_MD,
+                        GenericContextPosision.Arg3 => thunkMemory.C3_MD_MD,
+                        _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
+                    };
+                } else if (RequiresMethodTableArg(target)) {
+                    return GetGenericContextPosition(srcMethod) switch {
+                        GenericContextPosision.Arg1 => thunkMemory.C1_MD_MT,
+                        GenericContextPosision.Arg2 => thunkMemory.C2_MD_MT,
+                        GenericContextPosision.Arg3 => thunkMemory.C3_MD_MT,
+                        _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
+                    };
+                } else {
+                    throw new InvalidOperationException("Unknown generic ABI for target");
+                }
+            } else if (RequiresMethodTableArg(srcMethod)) {
+                if (RequiresMethodDescArg(target)) {
+                    return GetGenericContextPosition(srcMethod) switch {
+                        GenericContextPosision.Arg1 => thunkMemory.C1_MT_MD,
+                        GenericContextPosision.Arg2 => thunkMemory.C2_MT_MD,
+                        GenericContextPosision.Arg3 => throw new InvalidOperationException("Impossible generic ABI for source; third position method table"),
+                        _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
+                    };
+                } else if (RequiresMethodTableArg(target)) {
+                    return GetGenericContextPosition(srcMethod) switch {
+                        GenericContextPosision.Arg1 => thunkMemory.C1_MT_MT,
+                        GenericContextPosision.Arg2 => thunkMemory.C2_MT_MT,
+                        GenericContextPosision.Arg3 => throw new InvalidOperationException("Impossible generic ABI for source; third position method table"),
+                        _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
+                    };
+                } else {
+                    throw new InvalidOperationException("Unknown generic ABI for target");
+                }
+            } else {
+                throw new InvalidOperationException("Unknown generic ABI source");
+            }
         }
 
-        protected override void BackpatchJump(IntPtr source, IntPtr target, object backpatchInfo) {
-            // TODO: change this to repatch with the appropriate call thunks
-            base.BackpatchJump(source, target, backpatchInfo);
+        private IntPtr GetCallConvConverterThunkForMethod(MethodBase src, MethodBase target) {
+            bool hasRetBuf = MethodRequiresReturnBuffer(src);
+
+            if (src.IsStatic) {
+                return hasRetBuf
+                    ? thunkMemory.CC_RG_RG
+                    : thunkMemory.CC_G_G;
+            } else if (TakesGenericsFromThis(src)) {
+                return hasRetBuf
+                    ? thunkMemory.CC_TR_RG
+                    : thunkMemory.CC_T_G;
+            } else {
+                return hasRetBuf
+                    ? thunkMemory.CC_TRG_RG
+                    : thunkMemory.CC_TG_G;
+            }
+        }
+
+        protected override void PatchMethodInst(GenericPatchInfo patch, MethodBase realSrc, IntPtr codeStart) {
+            MethodBase realTarget = BuildInstantiationForMethod(patch.TargetMethod, realSrc);
+
+            IntPtr thunk = GetCallThunkForMethod(realSrc, realTarget);
+            IntPtr callConvConvert = GetCallConvConverterThunkForMethod(realSrc, realTarget);
+
+            CallType callType = FindCallType(codeStart, thunk);
+
+            ParameterInfo[] parameters = realSrc.GetParameters();
+            byte flags = 0;
+            ushort pushAdjust = 0;
+            if (parameters.Length >= 4) {
+                Type fourthParamType = parameters[3].ParameterType;
+                TypeCode typecode = Type.GetTypeCode(fourthParamType);
+                if (typecode is TypeCode.Single or TypeCode.Double) {
+                    flags |= 0b01;
+                }
+                if (typecode is TypeCode.Double) {
+                    flags |= 0b10;
+                }
+                if ((flags & 0b11) == 0) { // not a floating point
+                    int argSize = fourthParamType.GetManagedSize();
+                    if (argSize is not 1 and not 2 and not 4 and not 8) {
+                        // it is a value type that gets implicitly-byref'd
+                        argSize = 8;
+                    }
+                    pushAdjust = (ushort) (8 - argSize);
+                }
+            }
+
+            // we declare this to more easily use MakeWritable and the like
+            NativeDetourData detourData = new() {
+                Method = codeStart,
+                Target = thunk,
+                Type = (byte) callType,
+                Size = CallsiteMaxPatchSize,
+                Extra = IntPtr.Zero
+            };
+
+            DetourHelper.Native.MakeWritable(detourData);
+
+            int idx = 0;
+            if (callType == CallType.Rel32) {
+                codeStart.Write(ref idx, (byte) 0xE8);
+                codeStart.Write(ref idx, (uint) ((ulong) codeStart - (ulong) thunk));
+            } else {
+                codeStart.Write(ref idx, (byte) 0xFF);
+                codeStart.Write(ref idx, (byte) 0x15);
+                codeStart.Write(ref idx, (uint) (8 + 8 + 4 + 3)); // offset from end of instruction to end of other data for real address
+            }
+            codeStart.Write(ref idx, (ulong) callConvConvert);
+            codeStart.Write(ref idx, (ulong) realTarget.GetNativeStart());
+            codeStart.Write(ref idx, (uint) patch.Index);
+            codeStart.Write(ref idx, flags);
+            codeStart.Write(ref idx, pushAdjust);
+            if (callType == CallType.Abs64) {
+                codeStart.Write(ref idx, (ulong) thunk); // and needs the thunk's absolute address here
+            }
+
+            DetourHelper.Native.MakeExecutable(detourData);
+            DetourHelper.Native.FlushICache(detourData);
+        }
+
+        private MethodBase BuildInstantiationForMethod(MethodBase def, MethodBase instance) {
+            throw new NotImplementedException();
         }
 
         protected override MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc) {
