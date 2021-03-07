@@ -136,7 +136,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected static bool MethodRequiresReturnBuffer(MethodBase method) {
             // TODO: implement
-            throw new NotImplementedException();
+            return false;
         }
 
         /*
