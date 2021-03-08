@@ -138,50 +138,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
             // TODO: implement
             return false;
         }
-
-        /*
-//*******************************************************************************
-BOOL MethodDesc::IsSharedByGenericInstantiations()
-{
-    LIMITED_METHOD_DAC_CONTRACT;
-
-    if (IsWrapperStub())
-        return FALSE;
-    else if (GetMethodTable()->IsSharedByGenericInstantiations())
-        return TRUE;
-    else return IsSharedByGenericMethodInstantiations();
-}
-
-//*******************************************************************************
-BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
-{
-    LIMITED_METHOD_DAC_CONTRACT;
-
-    if (GetClassification() == mcInstantiated)
-        return AsInstantiatedMethodDesc()->IMD_IsSharedByGenericMethodInstantiations();
-    else return FALSE;
-}
-        
-//*******************************************************************************
-    BOOL IMD_IsGenericMethodDefinition()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-
-        return((m_wFlags2 & KindMask) == GenericMethodDefinition);
-    }
-
-    BOOL IMD_IsSharedByGenericMethodInstantiations()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-
-        return((m_wFlags2 & KindMask) == SharedMethodInstantiation);
-    }
-        */
-
-        /*
-        MT->IsSharedByGenericInstantiations() is whether or not this is the canonical instance
-         */
         #endregion
+
         private static MethodBase GetMethodOnSelf(string name)
             => typeof(GenericDetourCoreCLR)
                         .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
@@ -352,7 +310,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         }
 
         private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart, int index) {
-            NativeDetourData detourData = PatchInstantiation(decl, instance, codeStart, index);
+            NativeDetourData detourData = PatchInstantiation(patchInfo, decl, instance, codeStart, index);
             InstantiationPatch patch = new(instance, detourData);
             InstantiationPatch? existing = null;
             lock (patchInfo) {
@@ -368,9 +326,42 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             }
         }
 
+        protected NativeDetourData PatchUnshared(MethodBase from, IntPtr fromCodeStart, MethodBase to) {
+            to = DetourHelper.Runtime.GetDetourTarget(from, to);
+            NativeDetourData data = DetourHelper.Native.Create(fromCodeStart, to.GetNativeStart());
 
-        protected abstract NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index);
+            // yes i overwrite data.Extra, so sue me
+            data.Extra = DetourHelper.Native.MemAlloc(data.Size);
+            DetourHelper.Native.Copy(fromCodeStart, data.Extra, data.Type);
+
+            DetourHelper.Native.MakeWritable(data);
+            DetourHelper.Native.Apply(data);
+            DetourHelper.Native.MakeExecutable(data);
+
+            data.Type |= 0x80; // set the high bit of Type so we can figure out which ones are ours
+            return data;
+        }
+
+        private void UnpatchUnshared(NativeDetourData data) {
+            data.Type &= 0x7F; // clear high bit
+
+            DetourHelper.Native.MakeWritable(data);
+            DetourHelper.Native.Copy(data.Extra, data.Method, data.Type);
+            DetourHelper.Native.MakeExecutable(data);
+
+            DetourHelper.Native.MemFree(data.Extra);
+        }
+
+        protected abstract NativeDetourData PatchInstantiation(GenericPatchInfo patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index);
         protected abstract void UnpatchInstantiation(InstantiationPatch instantiation);
+        private void UnpatchInstanceInternal(InstantiationPatch instantiation) {
+            // we check the high bit of the patch type to figure out if this is our allocation
+            if ((instantiation.OriginalData.Type & 0x80) != 0) {
+                UnpatchUnshared(instantiation.OriginalData);
+            } else {
+                UnpatchInstantiation(instantiation);
+            }
+        }
 
         protected struct InstantiationPatch {
             public readonly MethodBase SourceInstantiation;
@@ -445,7 +436,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
             }
 
             foreach (KeyValuePair<MethodBase, InstantiationPatch> instances in patchInfo.PatchedInstantiations) {
-                UnpatchInstantiation(instances.Value);
+                UnpatchInstanceInternal(instances.Value);
             }
         }
 

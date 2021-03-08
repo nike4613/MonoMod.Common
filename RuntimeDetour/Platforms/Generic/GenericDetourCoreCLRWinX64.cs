@@ -1000,8 +1000,10 @@ jmp rax
             return UnknownMethodABI;
         }
 
-        protected override NativeDetourData PatchInstantiation(MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
-            // TODO: correctly handle the case where this is a unique instantiation
+        protected override NativeDetourData PatchInstantiation(GenericPatchInfo patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
+            if (!MethodIsGenericShared(methodInstance)) {
+                return PatchUnshared(methodInstance, codeStart, BuildInstantiationForMethod(patchInfo.TargetMethod, methodInstance));
+            }
             
             IntPtr thunk = GetPrecallThunkForMethod(methodInstance);
             IntPtr handler = GetPrecallHandlerForMethod(methodInstance);
