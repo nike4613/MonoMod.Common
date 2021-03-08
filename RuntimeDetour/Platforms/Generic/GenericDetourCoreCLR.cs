@@ -124,7 +124,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected static bool MethodIsGenericShared(MethodBase method) {
             if (!method.IsGenericMethod) {
-                return TypeIsGenericShared(method.DeclaringType);
+                return method.DeclaringType.GetGenericArguments().Any(TypeIsGenericShared);
             }
 
             if (method.ContainsGenericParameters) {
