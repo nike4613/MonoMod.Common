@@ -1187,7 +1187,7 @@ jmp rax
                 codeStart.Write(ref idx, (uint) (8 + 8 + 4 + 3)); // offset from end of instruction to end of other data for real address
             }
             codeStart.Write(ref idx, (ulong) callConvConvert);
-            codeStart.Write(ref idx, (ulong) realTarget.GetNativeStart());
+            codeStart.Write(ref idx, (ulong) GetSharedMethodBody(realTarget));
             codeStart.Write(ref idx, (uint) patch.Index);
             codeStart.Write(ref idx, flags);
             codeStart.Write(ref idx, pushAdjust);
@@ -1197,6 +1197,40 @@ jmp rax
 
             DetourHelper.Native.MakeExecutable(detourData);
             DetourHelper.Native.FlushICache(detourData);
+        }
+
+        private unsafe IntPtr GetSharedMethodBody(MethodBase method) {
+            IntPtr methodDesc = method.MethodHandle.Value;
+
+            const int offsToWrappedMd =
+                2 + // m_wFlags3AndTokenRemainder
+                1 + // m_chunkIndex
+                1 + // m_bFlags2
+                2 + // m_wSlotNumber
+                2 + // m_wFlags
+                // InstantiatedMethodDesc
+                0   ;
+            const int offsToWFlags2 =
+                offsToWrappedMd +
+                8 + // m_pWrappedMethodDesc
+                8 + // m_pPerInstInfo
+                0;
+
+            const int instantiationKindMask = 0x07;
+            const int kindWrapperStub = 0x03;
+            const int kindSharedInst = 0x02;
+
+            short flags = *(short*) (((byte*) methodDesc) + offsToWFlags2);
+            int kind = flags & instantiationKindMask;
+
+            if (kind != kindWrapperStub) {
+                throw new InvalidOperationException("Unprocessable instantiation kind");
+            }
+
+            IntPtr sharedMd = *(IntPtr*) (((byte*) methodDesc) + offsToWrappedMd);
+            MethodBase sharedInstance = MethodBase.GetMethodFromHandle(netPlatform.CreateHandleForHandlePointer(sharedMd));
+
+            return sharedInstance.GetNativeStart();
         }
     }
 }

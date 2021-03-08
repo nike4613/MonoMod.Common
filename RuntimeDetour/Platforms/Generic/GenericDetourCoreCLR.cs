@@ -319,7 +319,7 @@ BOOL MethodDesc::IsSharedByGenericMethodInstantiations()
         private static GenericDetourCoreCLR Instance;
 
         // we currently use stuff from this type, and this should only be running when this is the current anyway
-        private readonly DetourRuntimeNETCore30Platform netPlatform;
+        protected readonly DetourRuntimeNETCore30Platform netPlatform;
 
         protected GenericDetourCoreCLR() {
             Instance = this;
