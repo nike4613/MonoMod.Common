@@ -1,4 +1,6 @@
 ﻿#if !NET35
+using Mono.CompilerServices.SymbolWriter;
+using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -396,8 +398,53 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected int AddMethodPatch(MethodBase from, MethodInfo to) {
             // TODO: allow multi-patching, whether here or somewhere else
-            // TODO: validate that provided methods are compatible
+
+            if (!to.IsStatic) {
+                throw new ArgumentException("Generic patch target must be static", nameof(to));
+            }
+
+            if (!to.IsGenericMethodDefinition) {
+                throw new ArgumentException("Generic patch target must be generic method definition", nameof(to));
+            }
+
+            if (!from.IsGenericMethodDefinition && !(from.DeclaringType?.IsGenericType ?? false)) {
+                throw new ArgumentException("Generic patch source must be a generic method definition", nameof(to));
+            }
+
+            Type[] allGenericArgs = GetAllGenericArguments(from, out int genericArgsInType, to.GetGenericArguments().Length);
+            Type[] targetGenericArgs = to.GetGenericArguments();
+
+            if (targetGenericArgs.Length != allGenericArgs.Length) {
+                throw new ArgumentException("Generic patch target must have the same number of generic parameters as the source", nameof(to));
+            }
+
+            // ensure constraint compatibility
+            for (int i = 0; i < allGenericArgs.Length; i++) {
+                if (!CheckGenericParamCompatibility(allGenericArgs[i], targetGenericArgs[i]))
+                    throw new ArgumentException("Generic patch target must have compatible constraints", nameof(to));
+            }
+
+            // ensure argument compatibility
+            IEnumerable<Type> fromArgumentsE = from.GetParameters().Select(p => p.ParameterType);
+            if (!from.IsStatic) {
+                fromArgumentsE = new[] { from.GetThisParamType() }.Concat(fromArgumentsE);
+            }
+            Type[] fromArguments = fromArgumentsE.ToArray();
+            Type[] toArguments = to.GetParameters().Select(p => p.ParameterType).ToArray();
+
+            if (fromArguments.Length != toArguments.Length) {
+                throw new ArgumentException("Generic patch target must have the same number of parameters as the source", nameof(to));
+            }
+
+            for (int i = 0; i < fromArguments.Length; i++) {
+                if (!CheckArgumentCompatibility(fromArguments[i], toArguments[i], genericArgsInType))
+                    throw new ArgumentException("Generic patch target arguments must match source", nameof(to));
+            }
+
             lock (genericPatchesLockObject) {
+                if (patchedMethodIndexes.TryGetValue(from, out _))
+                    throw new ArgumentException("Generic patch source has already been patched", nameof(from));
+
                 int index = lastCleared;
                 GenericPatchInfo patchInfo = new(index, from, to);
                 if (index >= genericPatches.Count) {
@@ -413,6 +460,102 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 } while (lastCleared < genericPatches.Count && genericPatches[lastCleared] == null);
 
                 return index;
+            }
+        }
+
+        private static bool CheckGenericParamCompatibility(Type from, Type to) {
+            // our general rule is that to must have at most from attributes.
+            //
+            // in other words, we want this truth table for each bit of the attributes, where
+            // the first bit is from, the second is to:
+            // * 0 0 -> 1
+            // * 0 1 -> 0
+            // * 1 0 -> 1
+            // * 1 1 -> 1
+            // when inverted, is
+            // * 0 0 -> 0
+            // * 0 1 -> 1
+            // * 1 0 -> 0
+            // * 1 1 -> 0
+            // so our original is just
+            // * ~((a ^ b) & b)
+            // but since we want every bit to be 1, we loose the compliment and compare to zero
+            // * ((a ^ b) & b) == 0
+
+            GenericParameterAttributes fromAttrs = from.GenericParameterAttributes;
+            GenericParameterAttributes toAttrs = to.GenericParameterAttributes;
+            if (((fromAttrs ^ toAttrs) & toAttrs) != 0) {
+                return false;
+            }
+
+            // we want the same logic with constraints, but they're rather harder to do that with
+            Type[] fromConstraints = from.GetGenericParameterConstraints();
+            Type[] toConstraints = to.GetGenericParameterConstraints();
+
+            if (fromConstraints.Length == 0 && toConstraints.Length == 0)
+                return true; // short circuit if no other constraints
+
+            Type fromBaseType = fromConstraints.FirstOrDefault(t => t.IsClass);
+            Type toBaseType = toConstraints.FirstOrDefault(t => t.IsClass);
+
+            if ((fromBaseType is not null ^ toBaseType is not null) && toBaseType is not null) {
+                // to has a base constraint but from does not
+                return false;
+            }
+
+            if (fromBaseType is not null && toBaseType is not null) {
+                // both specify a base type
+                if (!toBaseType.IsAssignableFrom(fromBaseType))
+                    return false; // ensure compat between them
+            }
+
+            // all other generic parameters must be interfaces
+            HashSet<Type> toInterfaces = new(toConstraints.Where(t => t.IsInterface));
+            // given to's interface constraints, if we remove all of from's, then we should be left
+            // with either none, or interfaces that from's base type constraint impelments
+            foreach (Type type in fromConstraints)
+                toInterfaces.Remove(type);
+            if (toInterfaces.Count == 0)
+                return true; // nothing left, we're good
+            // otherwise, all remaining interfaces must be implemented by from's base type
+            // if from doesn't have a base type, then we fail
+            if (fromBaseType == null)
+                return false;
+
+            Type[] fromBaseInterfaces = fromBaseType.GetInterfaces();
+            // we again remove them all to make sure none are left
+            foreach (Type type in fromBaseInterfaces)
+                toInterfaces.Remove(type);
+            // our result is then whether or not toInterfaces is empty
+            return toInterfaces.Count == 0;
+        }
+
+        private static bool CheckArgumentCompatibility(Type from, Type to, int fromArgsInType) {
+            if (from.IsGenericParameter != to.IsGenericParameter) {
+                throw new ArgumentException("Generic");
+            }
+
+            if (from.IsGenericParameter) {
+                int position = from.GenericParameterPosition;
+                if (from.DeclaringMethod != null) {
+                    // the arg was declared by the method
+                    position += fromArgsInType;
+                }
+
+                return position == to.GenericParameterPosition;
+            } else {
+                if (to == from)
+                    return true;
+                // parameter is just a normal type, so we do IsAssignableFrom
+                if (to.IsAssignableFrom(from))
+                    return true;
+                // but From may be an inaccessible enum, so we also allow its underlying type
+                if (from.IsEnum) {
+                    if (to == from.GetEnumUnderlyingType())
+                        return true;
+                }
+
+                return false;
             }
         }
 
@@ -593,21 +736,27 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return BuildInstantiationForMethod(patch.TargetMethod, realSrc);
         }
 
-        protected virtual MethodBase BuildInstantiationForMethod(MethodInfo def, MethodBase instance) {
-            //   for now, we'll support only one kind of transformation: into a method with all of the arguments
-            // in order
-
-            List<Type> typeArguments = new(def.GetGenericArguments().Length);
+        private Type[] GetAllGenericArguments(MethodBase instance, out int numInType, int countHint = 0) {
+            List<Type> typeArguments = new(countHint);
 
             if (instance.DeclaringType?.IsGenericType ?? false) {
                 typeArguments.AddRange(instance.DeclaringType.GetGenericArguments());
             }
 
+            numInType = typeArguments.Count;
+
             if (instance.IsGenericMethod) {
                 typeArguments.AddRange(instance.GetGenericArguments());
             }
 
-            return def.MakeGenericMethod(typeArguments.ToArray());
+            return typeArguments.ToArray();
+        }
+
+        protected virtual MethodBase BuildInstantiationForMethod(MethodInfo def, MethodBase instance) {
+            //   for now, we'll support only one kind of transformation: into a method with all of the arguments
+            // in order
+            Type[] allGenericArgs = GetAllGenericArguments(instance, out _, def.GetGenericArguments().Length);
+            return def.MakeGenericMethod(allGenericArgs);
         }
 
     }
