@@ -133,7 +133,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 throw new InvalidOperationException("Cannot determine generic-sharedness without specific instantiation");
             }
 
-            return method.GetGenericArguments().Any(TypeIsGenericShared);
+            return method.GetGenericArguments().Any(TypeIsGenericShared) || method.DeclaringType.GetGenericArguments().Any(TypeIsGenericShared);
         }
         #endregion
 

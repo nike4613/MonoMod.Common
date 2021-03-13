@@ -190,6 +190,87 @@ jmp [r10]
             0x08, 0x41, 0xFF, 0x22,
         };
         #endregion
+        #region call_p2t
+        /*
+; after the call instruction is this:
+; 8[context converter ptr]
+; 8[real target]
+; 4[index]
+
+pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
+
+; setup stack frame
+push rbp
+sub rsp, 40h ; 4 qword (20h) + 4 qword arguments (18h) ~~+ 4 128-bit vectors~~
+lea rbp, [rsp + 40h]
+
+; save register-passed arguments, specifically in the top of our allocated range
+mov [rbp - 8h], rcx
+mov [rbp - 10h], rdx
+mov [rbp - 18h], r8
+mov [rbp - 20h], r9
+mov [rbp - 28h], r10
+; if we assume we never do floating point math, this should be fine... i hope
+;movdqa [rbp - 30h], xmm0
+;movdqa [rbp - 40h], xmm1
+;movdqa [rbp - 50h], xmm2
+;movdqa [rbp - 60h], xmm3
+
+; setup call
+; the methods being called here have no strangeness, only user args passed in register
+
+; arg 3 will be the this ptr
+mov r8, rcx
+
+; arg 1 will be the given context ptr, which here, is in rdx
+mov rcx, rdx
+
+; arg 2 will be the index ptr
+mov edx, [r10 + 10h]
+
+; finally call handler
+call toFillFixupPtr
+toFillFixupPtr:
+
+; rax now contains a corrected generic context
+
+; now we'll set up the call to the context converter
+; reload arguments
+mov rcx, [rbp - 8h]
+mov rdx, [rbp - 10h]
+mov r8, [rbp - 18h]
+mov r9, [rbp - 20h]
+mov r10, [rbp - 28h]
+;movdqa xmm0, [rbp - 30h]
+;movdqa xmm1, [rbp - 40h]
+;movdqa xmm2, [rbp - 50h]
+;movdqa xmm3, [rbp - 60h]
+
+; clean up our stack frame
+lea rsp, [rbp]
+pop rbp
+
+mov r11, [r10 + 8h] ; load our real target into r11
+
+; we're finally ready to call the context converter
+jmp [r10]
+
+; the context converter expects in rax the new generic context, and in r11 the real target
+         */
+        private const int call_p2t_from_fix_fn_offs = 43;
+        private static readonly byte[] call_p2t_form = {
+            0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
+            0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
+            0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
+            0x4C, 0x89, 0x4D, 0xE0, 0x4C, 0x89, 0x55, 0xD8,
+            0x49, 0x89, 0xC8, 0x48, 0x89, 0xD1, 0x41, 0x8B,
+            0x52, 0x10, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x48,
+            0x8B, 0x4D, 0xF8, 0x48, 0x8B, 0x55, 0xF0, 0x4C,
+            0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x4C,
+            0x8B, 0x55, 0xD8, 0x48, 0x8D, 0x65, 0x00, 0x5D,
+            0x4D, 0x8B, 0x5A, 0x08, 0x41, 0xFF, 0x22,
+        };
+        #endregion
         #region call_p3
         /*
 ; after the call instruction is this:
@@ -220,7 +301,8 @@ mov [rbp - 28h], r10
 ; the methods being called here have no strangeness, only user args passed in register
 
 ; arg 1 will be the given context ptr, which here, is in r8
-mov rcx, r8
+; arg 3 will be the this argument, which here, is in rcx
+xchg rcx, r8
 
 ; arg 2 will be the index ptr
 mov edx, [r10 + 10h]
@@ -258,13 +340,14 @@ jmp [r10]
             0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
             0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
             0x4C, 0x89, 0x4D, 0xE0, 0x4C, 0x89, 0x55, 0xD8,
-            0x4C, 0x89, 0xC1, 0x41, 0x8B, 0x52, 0x10, 0xE8,
+            0x49, 0x87, 0xC8, 0x41, 0x8B, 0x52, 0x10, 0xE8,
             0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x4D, 0xF8,
             0x48, 0x8B, 0x55, 0xF0, 0x4C, 0x8B, 0x45, 0xE8,
             0x4C, 0x8B, 0x4D, 0xE0, 0x4C, 0x8B, 0x55, 0xD8,
             0x48, 0x8D, 0x65, 0x00, 0x5D, 0x4D, 0x8B, 0x5A,
             0x08, 0x41, 0xFF, 0x22,
         };
+
         #endregion
         #region cc g g
         /*
@@ -661,6 +744,79 @@ jmp rax
             0x5D, 0xFF, 0xE0,
         };
         #endregion
+        #region pre2t
+        /*
+pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
+
+; setup stack frame
+push rbp
+sub rsp, 40h ; 4 qword (20h) + 3 qword arguments (18h) + some buffer ~~+ 4 128-bit vectors~~
+lea rbp, [rsp + 40h]
+
+; save register-passed arguments, specifically in the top of our allocated range
+mov [rbp - 8h], rcx
+mov [rbp - 10h], rdx
+mov [rbp - 18h], r8
+mov [rbp - 20h], r9
+; if we assume we never do floating point math, this should be fine... i hope
+;movdqa [rbp - 30h], xmm0
+;movdqa [rbp - 40h], xmm1
+;movdqa [rbp - 50h], xmm2
+;movdqa [rbp - 60h], xmm3
+
+; setup call
+; the methods being called here have no strangeness, only user args passed in register
+
+; pass the this arg to the thunk
+mov r9, rcx
+
+; second arg is the generic context, in rdx
+mov rcx, rdx
+
+; the third arg is the source start
+mov r8, r10 ; r8 is the argument we want it in
+xor rdx, rdx
+mov dx, word [r10 + 12] ; offset of the call insn length
+sub r8, rdx
+
+; the second arg is the index
+;xor rdx, rdx
+mov edx, [r10 + 8] ; offset of the index
+
+; finally call handler
+call [r10]
+
+; rax now contains our target method, but we need to re-load our arguments
+mov rcx, [rbp - 8h]
+mov rdx, [rbp - 10h]
+mov r8, [rbp - 18h]
+mov r9, [rbp - 20h]
+;movdqa xmm0, [rbp - 30h]
+;movdqa xmm1, [rbp - 40h]
+;movdqa xmm2, [rbp - 50h]
+;movdqa xmm3, [rbp - 60h]
+
+; clean up our stack frame
+lea rsp, [rbp]
+pop rbp
+
+; we're finally ready to call our target
+jmp rax
+
+         */
+        private static readonly byte[] precall_2t = {
+            0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
+            0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
+            0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
+            0x4C, 0x89, 0x4D, 0xE0, 0x49, 0x89, 0xC9, 0x48,
+            0x89, 0xD1, 0x4D, 0x89, 0xD0, 0x48, 0x31, 0xD2,
+            0x66, 0x41, 0x8B, 0x52, 0x0C, 0x49, 0x29, 0xD0,
+            0x41, 0x8B, 0x52, 0x08, 0x41, 0xFF, 0x12, 0x48,
+            0x8B, 0x4D, 0xF8, 0x48, 0x8B, 0x55, 0xF0, 0x4C,
+            0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
+            0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
+        };
+        #endregion
         #region pre3
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
@@ -683,6 +839,9 @@ mov [rbp - 20h], r9
 
 ; setup call
 ; the methods being called here have no strangeness, only user args passed in register
+
+; pass the this arg to the thunk
+mov r9, rcx
 
 ; third arg is the generic context, in r8
 mov rcx, r8
@@ -721,18 +880,20 @@ jmp rax
             0x41, 0x5A, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48,
             0x8D, 0x6C, 0x24, 0x40, 0x48, 0x89, 0x4D, 0xF8,
             0x48, 0x89, 0x55, 0xF0, 0x4C, 0x89, 0x45, 0xE8,
-            0x4C, 0x89, 0x4D, 0xE0, 0x4C, 0x89, 0xC1, 0x4D,
-            0x89, 0xD0, 0x48, 0x31, 0xD2, 0x66, 0x41, 0x8B,
-            0x52, 0x0C, 0x49, 0x29, 0xD0, 0x41, 0x8B, 0x52,
-            0x08, 0x41, 0xFF, 0x12, 0x48, 0x8B, 0x4D, 0xF8,
-            0x48, 0x8B, 0x55, 0xF0, 0x4C, 0x8B, 0x45, 0xE8,
-            0x4C, 0x8B, 0x4D, 0xE0, 0x48, 0x8D, 0x65, 0x00,
-            0x5D, 0xFF, 0xE0,
+            0x4C, 0x89, 0x4D, 0xE0, 0x49, 0x89, 0xC9, 0x4C,
+            0x89, 0xC1, 0x4D, 0x89, 0xD0, 0x48, 0x31, 0xD2,
+            0x66, 0x41, 0x8B, 0x52, 0x0C, 0x49, 0x29, 0xD0,
+            0x41, 0x8B, 0x52, 0x08, 0x41, 0xFF, 0x12, 0x48,
+            0x8B, 0x4D, 0xF8, 0x48, 0x8B, 0x55, 0xF0, 0x4C,
+            0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
+            0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
         #endregion
 
         #region jmp block
         private static readonly byte[] jmp_long = {
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
@@ -750,6 +911,7 @@ jmp rax
 
             public IntPtr Pre1;
             public IntPtr Pre2;
+            public IntPtr Pre2T;
             public IntPtr Pre3;
 
             public IntPtr CC_TRG_RG;
@@ -771,9 +933,11 @@ jmp rax
             public IntPtr C2_MT_MD;
             public IntPtr C2_MD_MT;
             public IntPtr C2_MD_MD;
+            public IntPtr C2_MDT_MT;
+            public IntPtr C2_MDT_MD;
 
-            public IntPtr C3_MD_MT;
-            public IntPtr C3_MD_MD;
+            public IntPtr C3_MDT_MT;
+            public IntPtr C3_MDT_MD;
         }
 
         private static uint RoundLength(uint len, uint amt = 16) {
@@ -783,7 +947,8 @@ jmp rax
         private static unsafe ConstThunkMemory BuildThunkMemory() {
             uint allocSize = 
                 RoundLength((uint) precall_1.Length) + 
-                RoundLength((uint) precall_2.Length) + 
+                RoundLength((uint) precall_2.Length) +
+                RoundLength((uint) precall_2t.Length) +
                 RoundLength((uint) precall_3.Length) +
                 RoundLength((uint) cconv_g_g.Length) +
                 RoundLength((uint) cconv_rg_rg.Length) +
@@ -793,9 +958,10 @@ jmp rax
                 RoundLength((uint) cconv_t_g.Length) + 
                 (RoundLength((uint) call_p1_form.Length) * 6) + // there are 6 variants of the C1 thunk
                 (RoundLength((uint) call_p2_form.Length) * 4) + //           4 variants of the C2 thunk
+                (RoundLength((uint) call_p2t_form.Length) * 2) + //          2 variants of the C2t thunk
                 (RoundLength((uint) call_p3_form.Length) * 2) + //       and 2 variants of the C3 thunk
-                RoundLength(6u * 6) + // there are 6 fixup targets, which requires 6 6-byte absolute jumps
-                (8u * 6);             //       and 6 absolute jump targets
+                RoundLength(6u * 8) + // there are 8 fixup targets, which requires 8 6-byte absolute jumps
+                (8u * 8);             //       and 8 absolute jump targets
 
             IntPtr alloc = DetourHelper.Native.MemAlloc(allocSize);
             DetourHelper.Native.MakeWritable(alloc, allocSize);
@@ -816,6 +982,7 @@ jmp rax
 
             data = CopyToData(out mem.Pre1, data, precall_1);
             data = CopyToData(out mem.Pre2, data, precall_2);
+            data = CopyToData(out mem.Pre2T, data, precall_2t);
             data = CopyToData(out mem.Pre3, data, precall_3);
             data = CopyToData(out mem.CC_G_G, data, cconv_g_g);
             data = CopyToData(out mem.CC_RG_RG, data, cconv_rg_rg);
@@ -836,17 +1003,22 @@ jmp rax
             data = CopyToData(out mem.C2_MT_MD, data, call_p2_form);
             data = CopyToData(out mem.C2_MD_MT, data, call_p2_form);
             data = CopyToData(out mem.C2_MD_MD, data, call_p2_form);
+            // all variants of C2t
+            data = CopyToData(out mem.C2_MDT_MT, data, call_p2t_form);
+            data = CopyToData(out mem.C2_MDT_MD, data, call_p2t_form);
             // all variants of C3
-            data = CopyToData(out mem.C3_MD_MT, data, call_p3_form);
-            data = CopyToData(out mem.C3_MD_MD, data, call_p3_form);
+            data = CopyToData(out mem.C3_MDT_MT, data, call_p3_form);
+            data = CopyToData(out mem.C3_MDT_MD, data, call_p3_form);
 
             // calculate offsets to jump block offsets
-            int rel_t_mt = 2;
-            int rel_t_md = rel_t_mt + 6;
-            int rel_mt_mt = rel_t_md + 6;
-            int rel_mt_md = rel_mt_mt + 6;
-            int rel_md_mt = rel_mt_md + 6;
-            int rel_md_md = rel_md_mt + 6;
+            const int rel_t_mt = 2;
+            const int rel_t_md = rel_t_mt + 6;
+            const int rel_mt_mt = rel_t_md + 6;
+            const int rel_mt_md = rel_mt_mt + 6;
+            const int rel_md_mt = rel_mt_md + 6;
+            const int rel_md_md = rel_md_mt + 6;
+            const int rel_mdt_mt = rel_md_md + 6;
+            const int rel_mdt_md = rel_mdt_mt + 6;
             // copy in jump block
             data = CopyToData(out IntPtr jumpBlock, data, jmp_long);
 
@@ -872,9 +1044,11 @@ jmp rax
                 WriteOffset(mem.C2_MT_MD, call_p2_from_fix_fn_offs, jumpBlock, rel_mt_md - 2);
                 WriteOffset(mem.C2_MD_MT, call_p2_from_fix_fn_offs, jumpBlock, rel_md_mt - 2);
                 WriteOffset(mem.C2_MD_MD, call_p2_from_fix_fn_offs, jumpBlock, rel_md_md - 2);
+                WriteOffset(mem.C2_MDT_MT, call_p2t_from_fix_fn_offs, jumpBlock, rel_mdt_mt - 2);
+                WriteOffset(mem.C2_MDT_MD, call_p2t_from_fix_fn_offs, jumpBlock, rel_mdt_md - 2);
 
-                WriteOffset(mem.C3_MD_MT, call_p3_from_fix_fn_offs, jumpBlock, rel_md_mt - 2);
-                WriteOffset(mem.C3_MD_MD, call_p3_from_fix_fn_offs, jumpBlock, rel_md_md - 2);
+                WriteOffset(mem.C3_MDT_MT, call_p3_from_fix_fn_offs, jumpBlock, rel_mdt_mt - 2);
+                WriteOffset(mem.C3_MDT_MD, call_p3_from_fix_fn_offs, jumpBlock, rel_mdt_md - 2);
             }
 
             {
@@ -886,16 +1060,27 @@ jmp rax
                 int offs = (int) (data - ((byte*) jumpBlock));
                 WriteOffset(jumpBlock, rel_t_mt, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxThis2MTTarget);
+
                 WriteOffset(jumpBlock, rel_t_md, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxThis2MDTarget);
+
                 WriteOffset(jumpBlock, rel_mt_mt, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxMT2MTTarget);
+
                 WriteOffset(jumpBlock, rel_mt_md, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxMT2MDTarget);
+
                 WriteOffset(jumpBlock, rel_md_mt, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxMD2MTTarget);
+
                 WriteOffset(jumpBlock, rel_md_md, offs);
                 jumpBlock.Write(ref offs, (ulong) FixCtxMD2MDTarget);
+
+                WriteOffset(jumpBlock, rel_mdt_mt, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMDT2MTTarget);
+
+                WriteOffset(jumpBlock, rel_mdt_md, offs);
+                jumpBlock.Write(ref offs, (ulong) FixCtxMDT2MDTarget);
             }
 
             DetourHelper.Native.MakeExecutable(alloc, allocSize);
@@ -987,7 +1172,7 @@ jmp rax
         private IntPtr GetPrecallThunkForMethod(MethodBase instance)
             => GetGenericContextPosition(instance) switch {
                 GenericContextPosision.Arg1 => thunkMemory.Pre1,
-                GenericContextPosision.Arg2 => thunkMemory.Pre2,
+                GenericContextPosision.Arg2 => instance.IsStatic ? thunkMemory.Pre2 : thunkMemory.Pre2T,
                 GenericContextPosision.Arg3 => thunkMemory.Pre3,
                 _ => throw new InvalidOperationException()
             };
@@ -997,8 +1182,11 @@ jmp rax
                 return FixupForThisPtrContext;
             if (RequiresMethodTableArg(instance))
                 return FixupForMethodTableContext;
-            if (RequiresMethodDescArg(instance))
-                return FixupForMethodDescContext;
+            if (RequiresMethodDescArg(instance)) {
+                return instance.IsStatic
+                    ? FixupForMethodDescContext
+                    : FixupForMethodDescThisContext;
+            }
             return UnknownMethodABI;
         }
 
@@ -1085,15 +1273,15 @@ jmp rax
                 if (RequiresMethodDescArg(target)) {
                     return GetGenericContextPosition(srcMethod) switch {
                         GenericContextPosision.Arg1 => thunkMemory.C1_MD_MD,
-                        GenericContextPosision.Arg2 => thunkMemory.C2_MD_MD,
-                        GenericContextPosision.Arg3 => thunkMemory.C3_MD_MD,
+                        GenericContextPosision.Arg2 => srcMethod.IsStatic ? thunkMemory.C2_MD_MD : thunkMemory.C2_MDT_MD,
+                        GenericContextPosision.Arg3 => thunkMemory.C3_MDT_MD,
                         _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
                     };
                 } else if (RequiresMethodTableArg(target)) {
                     return GetGenericContextPosition(srcMethod) switch {
                         GenericContextPosision.Arg1 => thunkMemory.C1_MD_MT,
-                        GenericContextPosision.Arg2 => thunkMemory.C2_MD_MT,
-                        GenericContextPosision.Arg3 => thunkMemory.C3_MD_MT,
+                        GenericContextPosision.Arg2 => srcMethod.IsStatic ? thunkMemory.C2_MD_MT : thunkMemory.C2_MDT_MT,
+                        GenericContextPosision.Arg3 => thunkMemory.C3_MDT_MT,
                         _ => throw new InvalidOperationException("Unknown generic ABI for source or target"),
                     };
                 } else {
