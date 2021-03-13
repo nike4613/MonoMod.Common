@@ -138,7 +138,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         protected virtual void PrepareMethod(MethodBase method, RuntimeMethodHandle handle, RuntimeTypeHandle[] instantiation)
             => RuntimeHelpers.PrepareMethod(handle, instantiation);
 
-        protected virtual void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
+        public virtual void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
             // no-op. Not supported on all platforms, but throwing an exception doesn't make sense.
         }
 

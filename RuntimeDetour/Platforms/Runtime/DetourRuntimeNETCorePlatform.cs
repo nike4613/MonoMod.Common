@@ -82,7 +82,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         protected static unsafe IntPtr ReadObjectVTable(IntPtr @object, int index)
             => *GetVTableEntry(@object, index);
 
-        protected override void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
+        public override void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
             // https://github.com/dotnet/runtime/blob/89965be3ad2be404dc82bd9e688d5dd2a04bcb5f/src/coreclr/src/vm/method.hpp#L178
             // mdcNotInline = 0x2000
             // References to RuntimeMethodHandle (CORINFO_METHOD_HANDLE) pointing to MethodDesc

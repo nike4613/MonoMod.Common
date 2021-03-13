@@ -62,7 +62,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return method.MethodHandle;
         }
 
-        protected override void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
+        public override void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
             // This is not needed for .NET Framework - see DisableInliningTest.
         }
 

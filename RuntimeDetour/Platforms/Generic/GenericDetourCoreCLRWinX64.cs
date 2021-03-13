@@ -966,7 +966,7 @@ jmp rax
             Arg1, Arg2, Arg3
         }
 
-        private static GenericContextPosision GetGenericContextPosition(MethodBase instance) {
+        private GenericContextPosision GetGenericContextPosition(MethodBase instance) {
             if (TakesGenericsFromThis(instance)) {
                 // if we take generics from the this parameter, grab the first given arg
                 return GenericContextPosision.Arg1;

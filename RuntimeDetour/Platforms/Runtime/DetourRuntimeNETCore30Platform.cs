@@ -22,7 +22,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         // The JitVersionGuid is the same for Core 3.0 and 3.1
         public static readonly Guid JitVersionGuid = new Guid("d609bed1-7831-49fc-bd49-b6f054dd4d46");
 
-        protected override unsafe void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
+        public override unsafe void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
             // https://github.com/dotnet/runtime/blob/89965be3ad2be404dc82bd9e688d5dd2a04bcb5f/src/coreclr/src/vm/method.hpp#L178
             // mdcNotInline = 0x2000
             // References to RuntimeMethodHandle (CORINFO_METHOD_HANDLE) pointing to MethodDesc

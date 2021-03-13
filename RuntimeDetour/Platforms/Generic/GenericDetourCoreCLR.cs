@@ -54,7 +54,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 #if !MONOMOD_INTERNAL
     public
 #endif
-    abstract class GenericDetourCoreCLR : IGenericDetourPlatform {
+    abstract partial class GenericDetourCoreCLR : IGenericDetourPlatform {
 
         // src/coreclr/src/vm/generics.cpp
         // ^^^ the above contains the logic that determines sharing
@@ -134,11 +134,6 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
 
             return method.GetGenericArguments().Any(TypeIsGenericShared);
-        }
-
-        protected static bool MethodRequiresReturnBuffer(MethodBase method) {
-            // TODO: implement
-            return false;
         }
         #endregion
 
@@ -453,6 +448,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     genericPatches[index] = patchInfo;
                 }
                 patchedMethodIndexes.Add(from, index);
+
+                netPlatform.DisableInlining(from, from.MethodHandle);
 
                 // find the next empty space and update lastCleared, if there is one
                 do {
