@@ -180,6 +180,22 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
+        private static IntPtr fixupForMethodDescThisContext = IntPtr.Zero;
+        protected static IntPtr FixupForMethodDescThisContext
+            => GetPtrForCtx(ref fixupForMethodDescThisContext, nameof(FindAndFixupThunkForMethodDescThisContext));
+
+        [MethodImpl((MethodImplOptions) 512)] // mark it AggressiveOptimization if the runtime supports it
+        private static IntPtr FindAndFixupThunkForMethodDescThisContext(IntPtr methodDesc, int index, IntPtr origStart, object thisptr) {
+            try {
+                // methodDesc contains the MethodDesc* for the current method
+                Instance.PatchInstanceForMethodDescThisContext(thisptr, methodDesc, index, origStart);
+                return origStart; // always re-call the original method to go through the patch
+            } catch (Exception e) {
+                MMDbgLog.Log($"An error ocurred while trying to resolve the target method pointer for index {index}: {e}");
+                return PatchResolveFailureTarget;
+            }
+        }
+
         private static IntPtr fixupForMethodTableContext = IntPtr.Zero;
         protected static IntPtr FixupForMethodTableContext
             => GetPtrForCtx(ref fixupForMethodTableContext, nameof(FindAndFixupThunkForMethodTableContext));
@@ -268,6 +284,22 @@ namespace MonoMod.RuntimeDetour.Platforms {
         [MethodImpl((MethodImplOptions) 512)]
         private static IntPtr FixCtxMD2MD(IntPtr ctx, int index) {
             return Instance.ConvertMD2MDCached(ctx, index);
+        }
+
+        private static IntPtr fixCtxMDT2MTTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMDT2MTTarget
+            => GetPtrForCtx(ref fixCtxMDT2MTTarget, nameof(FixCtxMDT2MT));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMDT2MT(IntPtr ctx, int index, object thisptr) {
+            return Instance.ConvertMDT2MTCached(thisptr, ctx, index);
+        }
+
+        private static IntPtr fixCtxMDT2MDTarget = IntPtr.Zero;
+        protected static IntPtr FixCtxMDT2MDTarget
+            => GetPtrForCtx(ref fixCtxMDT2MDTarget, nameof(FixCtxMDT2MD));
+        [MethodImpl((MethodImplOptions) 512)]
+        private static IntPtr FixCtxMDT2MD(IntPtr ctx, int index, object thisptr) {
+            return Instance.ConvertMDT2MDCached(thisptr, ctx, index);
         }
         #endregion
 
@@ -602,9 +634,15 @@ namespace MonoMod.RuntimeDetour.Platforms {
         protected void PatchInstanceForMethodDescContext(IntPtr methodDesc, int index, IntPtr realCodeStart) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
-            RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
+            MethodBase realMethod = RealInstFromMD(methodDesc);
 
-            MethodBase realMethod = MethodBase.GetMethodFromHandle(handle);
+            PatchMethodInst(patchInfo, realMethod, realCodeStart);
+        }
+
+        protected void PatchInstanceForMethodDescThisContext(object thisptr, IntPtr methodDesc, int index, IntPtr realCodeStart) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+
+            MethodBase realMethod = RealInstFromMDT(thisptr, methodDesc, patchInfo);
 
             PatchMethodInst(patchInfo, realMethod, realCodeStart);
         }
@@ -686,10 +724,33 @@ namespace MonoMod.RuntimeDetour.Platforms {
             MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
             return RealTargetToMD(target);
         }
+
+
+        private readonly ConditionalWeakTable<object, ConcurrentDictionary<IntPtr, IntPtr>> mdThisConvCache = new();
+        private IntPtr ConvertMDT2MTCached(object thisptr, IntPtr ctx, int index) {
+            ConcurrentDictionary<IntPtr, IntPtr> lookup = mdThisConvCache.GetOrCreateValue(thisptr);
+            return lookup.GetOrAdd(ctx, i => ConvertMDT2MT(thisptr, ctx, index));
+        }
+        private IntPtr ConvertMDT2MT(object thisptr, IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMDT(thisptr, ctx, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMT(target);
+        }
+        private IntPtr ConvertMDT2MDCached(object thisptr, IntPtr ctx, int index) {
+            ConcurrentDictionary<IntPtr, IntPtr> lookup = mdThisConvCache.GetOrCreateValue(thisptr);
+            return lookup.GetOrAdd(ctx, i => ConvertMDT2MD(thisptr, ctx, index));
+        }
+        private IntPtr ConvertMDT2MD(object thisptr, IntPtr ctx, int index) {
+            GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
+            MethodBase realSrc = RealInstFromMDT(thisptr, ctx, patchInfo);
+            MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
+            return RealTargetToMD(target);
+        }
         #endregion
 
         #region Instantiation Lookup
-        private MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
+        private Type RealTypeFromThis(object thisptr, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
             Type origType = origSrc.DeclaringType;
             Type realType = thisptr.GetType();
@@ -704,9 +765,15 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 }
             }
 
+            return realType;
+        }
+
+        private MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
+            Type realType = RealTypeFromThis(thisptr, patchInfo);
+
             // find the actual method impl using this whacky type handle workaround
 
-            RuntimeMethodHandle origHandle = origSrc.MethodHandle;
+            RuntimeMethodHandle origHandle = patchInfo.SourceMethod.MethodHandle;
             RuntimeTypeHandle realTypeHandle = realType.TypeHandle;
 
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
@@ -715,6 +782,12 @@ namespace MonoMod.RuntimeDetour.Platforms {
         private MethodBase RealInstFromMD(IntPtr methodDesc) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             return MethodBase.GetMethodFromHandle(handle);
+        }
+
+        private MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
+            RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
+            Type realType = RealTypeFromThis(thisptr, patchInfo);
+            return MethodBase.GetMethodFromHandle(handle, realType.TypeHandle);
         }
 
         private MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
