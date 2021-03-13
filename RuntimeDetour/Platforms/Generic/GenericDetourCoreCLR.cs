@@ -436,6 +436,16 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     throw new ArgumentException("Generic patch target arguments must match source", nameof(to));
             }
 
+            // ensure return compatibility
+            if (from is MethodInfo meth) {
+                if (!CheckArgumentCompatibility(to.ReturnType, meth.ReturnType, genericArgsInType))
+                    throw new ArgumentException("Generic patch target must return a compatible type", nameof(to));
+            } else {
+                if (to.ReturnType != typeof(void)) {
+                    throw new ArgumentException("Generic patch target must return void", nameof(to));
+                }
+            }
+
             lock (genericPatchesLockObject) {
                 if (patchedMethodIndexes.TryGetValue(from, out _))
                     throw new ArgumentException("Generic patch source has already been patched", nameof(from));
