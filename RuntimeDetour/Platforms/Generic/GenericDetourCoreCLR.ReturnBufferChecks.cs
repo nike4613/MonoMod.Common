@@ -66,6 +66,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 7 => StructRetBufferInfo.OddSize7,
                 // can't actually test for 8 because it might be an HFA
                 9 => StructRetBufferInfo.OddSize9,
+                // TODO: maybe assume that these intermediary sizes are equivalent to the next test up?
                 12 => StructRetBufferInfo.Int3,
                 16 => StructRetBufferInfo.Long2,
                 24 => StructRetBufferInfo.Long3,

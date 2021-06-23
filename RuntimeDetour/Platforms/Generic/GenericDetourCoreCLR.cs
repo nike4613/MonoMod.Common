@@ -1,5 +1,5 @@
 ﻿#if !NET35
-using Mono.CompilerServices.SymbolWriter;
+using Mono.Cecil;
 using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
@@ -7,6 +7,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Mono.Cecil.Cil;
+using System.Runtime.InteropServices;
+using GenericParameterAttributes = System.Reflection.GenericParameterAttributes;
+using CTypeAttributes = Mono.Cecil.TypeAttributes;
+using CMethodAttributes = Mono.Cecil.MethodAttributes;
+using CMethodImplAttributes = Mono.Cecil.MethodImplAttributes;
+using CCallSite = Mono.Cecil.CallSite;
 
 namespace MonoMod.RuntimeDetour.Platforms {
 
@@ -392,7 +399,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
-        protected struct InstantiationPatch {
+        public struct InstantiationPatch {
             public readonly MethodBase SourceInstantiation;
             public readonly NativeDetourData OriginalData;
 
@@ -402,13 +409,15 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
-        protected class GenericPatchInfo {
-            public readonly int Index;
+        public class GenericPatchInfo {
+            public readonly GenericDetourCoreCLR DetourRuntime;
             public readonly MethodBase SourceMethod;
             public readonly MethodInfo TargetMethod;
             public readonly Dictionary<MethodBase, InstantiationPatch> PatchedInstantiations = new();
+            public readonly int Index;
 
-            public GenericPatchInfo(int index, MethodBase source, MethodInfo target) {
+            public GenericPatchInfo(GenericDetourCoreCLR runtime, int index, MethodBase source, MethodInfo target) {
+                DetourRuntime = runtime;
                 Index = index;
                 SourceMethod = source;
                 TargetMethod = target;
@@ -483,7 +492,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     throw new ArgumentException("Generic patch source has already been patched", nameof(from));
 
                 int index = lastCleared;
-                GenericPatchInfo patchInfo = new(index, from, to);
+                GenericPatchInfo patchInfo = new(this, index, from, to);
                 if (index >= genericPatches.Count) {
                     genericPatches.Add(patchInfo);
                 } else {
@@ -655,6 +664,164 @@ namespace MonoMod.RuntimeDetour.Platforms {
             PatchMethodInst(patchInfo, realMethod, realCodeStart);
         }
         #endregion
+        
+        // the maximum number of registers that may be used as arguments in the calling convention
+        protected abstract int PlatMaxRegisterArgCount { get; }
+        // a helper which, when called, returns the address of the information about a patchsite
+        protected abstract MethodInfo PlatThunkGetReturnTargetHelper { get; }
+
+        // bits 0 through PlatMaxRegisterArgCount-1 indicate the floatiness of arguments, bit PlatMaxRegisterArgCount indicates the floatiness of the return value
+        protected abstract ulong GetFloatRegisterPattern(MethodBase method);
+
+        protected abstract int GetGenericContextPosition(MethodBase method);
+
+        private static readonly MethodInfo GCHandle_FromIntPtr = typeof(GCHandle).GetMethod(nameof(GCHandle.FromIntPtr), BindingFlags.Public | BindingFlags.Static);
+        private static readonly MethodInfo GCHandle_Target = typeof(GCHandle).GetProperty(nameof(GCHandle.Target), BindingFlags.Public | BindingFlags.Instance).GetGetMethod();
+        private static readonly FieldInfo GenericPatchInfo_DetourRuntime = typeof(GenericPatchInfo).GetField(nameof(GenericPatchInfo.DetourRuntime));
+        private static readonly MethodInfo GenericDetourCoreCLR_PrecallBackpatch = typeof(GenericDetourCoreCLR).GetMethod(nameof(GenericPrecallDoFixup), BindingFlags.Public | BindingFlags.Instance);
+
+        private MethodInfo CreatePrecallHelper(ulong floatRegisterPattern) {
+            const string Namespace = "MonoMod.RuntimeDetour.Platforms.Generic";
+            const string TypeName = "Precall";
+            using (ModuleDefinition module = ModuleDefinition.CreateModule($"{Namespace}.{TypeName}<{floatRegisterPattern:X16}>", ModuleKind.Dll)) {
+                TypeDefinition containingType = new(Namespace, TypeName, CTypeAttributes.Public | CTypeAttributes.Abstract | CTypeAttributes.Sealed); // public static class
+                containingType.BaseType = module.ImportReference(typeof(object));
+
+                TypeReference intArg = module.ImportReference(typeof(IntPtr));
+                TypeReference floatArg = module.ImportReference(typeof(double)); // I don't think there's a platform without native double support that CoreCLR targets
+
+                MethodDefinition precallHelper = new("Helper", 
+                    CMethodAttributes.Public | CMethodAttributes.Static, 
+                    ((floatRegisterPattern >> PlatMaxRegisterArgCount) & 0x1) == 0 ? intArg : floatArg); // check the last bit of the register pattern for return type floatiness
+                precallHelper.ImplAttributes = CMethodImplAttributes.IL | CMethodImplAttributes.NoInlining | (CMethodImplAttributes) 512; // flag it for aggressive optimization
+
+                ulong bit = 1;
+                for (int i = 0; i < PlatMaxRegisterArgCount; i++) {
+                    precallHelper.Parameters.Add(new((floatRegisterPattern & bit) == 0 ? intArg : floatArg));
+                    bit <<= 1;
+                }
+
+                {
+                    ILProcessor il = precallHelper.Body.GetILProcessor();
+
+                    VariableDefinition patchCallTargetPtrPtr = new(intArg);
+                    VariableDefinition gctxDecoderPtrPtr = new(intArg);
+                    VariableDefinition genericPatchInfo = new(module.ImportReference(typeof(GenericPatchInfo)));
+                    VariableDefinition gcHandle = new(module.ImportReference(typeof(GCHandle)));
+                    precallHelper.Body.Variables.AddRange(new[] { patchCallTargetPtrPtr, gctxDecoderPtrPtr, genericPatchInfo, gcHandle });
+
+                    // first thing we always do is get our patchsite info
+                    il.Emit(OpCodes.Call, module.ImportReference(PlatThunkGetReturnTargetHelper));
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Stloc, patchCallTargetPtrPtr);
+
+                    il.Emit(OpCodes.Ldc_I4, IntPtr.Size);
+                    il.Emit(OpCodes.Add);
+
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldind_I); // we don't store the pointer here, because we never need to modify this; it will remain the same even post-precall
+                    // lets load our gchandle inline
+                    il.Emit(OpCodes.Call, module.ImportReference(GCHandle_FromIntPtr));
+                    il.Emit(OpCodes.Stloc, gcHandle);
+                    il.Emit(OpCodes.Ldloca, gcHandle);
+                    il.Emit(OpCodes.Call, module.ImportReference(GCHandle_Target));
+                    il.Emit(OpCodes.Castclass, genericPatchInfo.VariableType);
+                    il.Emit(OpCodes.Stloc, genericPatchInfo);
+
+                    il.Emit(OpCodes.Ldc_I4, IntPtr.Size);
+                    il.Emit(OpCodes.Add);
+
+                    il.Emit(OpCodes.Stloc, gctxDecoderPtrPtr);
+
+                    // stack should be empty here
+
+                    // we'll start preparing to call into ourselves for the backpatch
+                    il.Emit(OpCodes.Ldloc, genericPatchInfo);
+                    il.Emit(OpCodes.Ldfld, module.ImportReference(GenericPatchInfo_DetourRuntime));
+
+                    il.Emit(OpCodes.Ldloc, genericPatchInfo);
+
+                    // now that we have our patchsite info, lets call our generic context decoder
+
+                    // load arguments while building our callsites
+                    CCallSite decoderCallSite = new(module.ImportReference(typeof(MethodBase))) {
+                        CallingConvention = MethodCallingConvention.Default,
+                        HasThis = false,
+                        ExplicitThis = false
+                    };
+
+                    il.Emit(OpCodes.Ldloc, genericPatchInfo);
+                    decoderCallSite.Parameters.Add(new(genericPatchInfo.VariableType));
+                    foreach (ParameterDefinition param in precallHelper.Parameters) {
+                        il.Emit(OpCodes.Ldarg, param);
+                        decoderCallSite.Parameters.Add(new(param.ParameterType));
+                    }
+                    il.Emit(OpCodes.Ldloc, gctxDecoderPtrPtr);
+                    il.Emit(OpCodes.Ldind_I); // get the decoder pointer on top of the stack
+                    // perform the call
+                    il.Emit(OpCodes.Calli, decoderCallSite);
+
+                    // load the patchsite data ptr, then call our fixup method
+                    il.Emit(OpCodes.Ldloc, patchCallTargetPtrPtr);
+                    il.Emit(OpCodes.Call, module.ImportReference(GenericDetourCoreCLR_PrecallBackpatch));
+                    // this returns where we should call to in the end
+                    il.Emit(OpCodes.Stloc, patchCallTargetPtrPtr); // reuse this variable for my sanity
+
+                    // build the callsite while loading parameters
+                    CCallSite tailCallSite = new(precallHelper.ReturnType) {
+                        CallingConvention = MethodCallingConvention.Default,
+                        HasThis = false,
+                        ExplicitThis = false
+                    };
+                    foreach (ParameterDefinition param in precallHelper.Parameters) {
+                        il.Emit(OpCodes.Ldarg, param);
+                        tailCallSite.Parameters.Add(new(param.ParameterType));
+                    }
+                    il.Emit(OpCodes.Ldloc, patchCallTargetPtrPtr);
+                    // tailcall to our target
+                    il.Emit(OpCodes.Tail);
+                    il.Emit(OpCodes.Calli, tailCallSite);
+                    il.Emit(OpCodes.Ret);
+                }
+
+                containingType.Methods.Add(precallHelper);
+                module.Types.Add(containingType);
+
+                //module.Write($"{TypeName}{floatRegisterPattern:X16}.dll");
+
+                Assembly helperAssembly = ReflectionHelper.Load(module);
+                return helperAssembly.GetType(containingType.FullName, true).GetMethod(precallHelper.Name);
+            }
+        }
+
+        public unsafe IntPtr GenericPrecallDoFixup(GenericPatchInfo patchInfo, MethodBase instance, IntPtr* patchsiteData) {
+            // patchsiteData has, in slot 0, the call target ptr, and in slot 1, the patchInfo GCHandle
+
+            // TODO: actually do the precall fixup
+            throw new NotImplementedException();
+            
+            // whatever this returns will be what the precall jumps to afterward
+            // therefore, it should return the address of the original patch call to automatically execute the 
+            //   newly-patched instance
+        }
+
+        private readonly ConcurrentDictionary<ulong, MethodInfo> precallHelperMethods = new();
+        private MethodInfo GetOrCreatePrecallHelper(ulong floatRegisterPattern) {
+            return precallHelperMethods.GetOrAdd(floatRegisterPattern, CreatePrecallHelper);
+        }
+
+        // The precall helper ABI is as follows:
+        // - PlatThunkGetReturnTargetHelper must take no arguments and return a pointer to an array of 3 pointers:
+        //   - 0: the pointer to the precall helper body. This will be updated by the precall helper to point to the final thunk.
+        //   - 1: a GCHandle pointer to the GenericPatchInfo for the method the precall helper is attempting to patch.
+        //   - 2: a pointer to the appropriate generic context decoder for the method being patched.
+        // - The generic context decoder in slot 2 returns the MethodBase for the generic instantiation, and takes the following parameters, in order:
+        //   - The GenericPatchInfo object for the method being patched
+        //   - PlatMaxRegisterArgCount pointer or floating point arguments, most of which should be ignored, save the one which corresponds to the generic context.
+
+        protected MethodInfo GetPrecallHelper(MethodBase srcMethod) {
+            return GetOrCreatePrecallHelper(GetFloatRegisterPattern(srcMethod));
+        }
 
         protected abstract void PatchMethodInst(GenericPatchInfo patch, MethodBase realSrc, IntPtr realCodeStart);
 
