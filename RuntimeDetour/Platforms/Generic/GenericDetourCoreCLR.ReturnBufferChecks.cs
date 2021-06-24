@@ -13,8 +13,6 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
 
         protected bool MethodRequiresReturnBuffer(MethodBase method) {
-            // TODO: implement
-
             // src/coreclr/src/jit/importer.cpp line 9065
             // src/coreclr/src/jit/compiler.cpp line 913
 

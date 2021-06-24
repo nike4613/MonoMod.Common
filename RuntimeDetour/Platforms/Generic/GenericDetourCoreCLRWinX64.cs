@@ -1260,14 +1260,46 @@ jmp rax
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
-        private static MethodBase DummyGenericContextDecoder(GenericPatchInfo patchInfo, IntPtr arg0, IntPtr arg1, IntPtr arg2, IntPtr arg3) {
-            MMDbgLog.Log("In dummy generic context decoder");
-            return null;
+        private static IntPtr ObjectForPtrImpl(IntPtr ptr) => ptr;
+
+        [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
+        private static unsafe object ObjectForPtr(IntPtr ptr) {
+            // we basically just want to reinterpret an IntPtr as an object reference, and this lets us do that
+            return ((delegate*<IntPtr, object>) (delegate*<IntPtr, IntPtr>) &ObjectForPtrImpl)(ptr);
         }
 
-        protected override NativeDetourData PatchInstantiation(GenericPatchInfo patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
+        private MethodBase DecodeGenericContext(InstantiationPatch patchInfo, IntPtr context, IntPtr firstArg) {
+            if (TakesGenericsFromThis(patchInfo.SourceInstantiation))
+                return RealInstFromThis(ObjectForPtr(context), patchInfo.OwningPatchInfo);
+            if (RequiresMethodTableArg(patchInfo.SourceInstantiation))
+                return RealInstFromMT(context, patchInfo.OwningPatchInfo);
+            if (RequiresMethodDescArg(patchInfo.SourceInstantiation)) {
+                return patchInfo.SourceInstantiation.IsStatic
+                    ? RealInstFromMD(context)
+                    : RealInstFromMDT(ObjectForPtr(firstArg), context, patchInfo.OwningPatchInfo);
+            }
+            throw new InvalidOperationException("Unknown generic ABI");
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
+        private static MethodBase PrecallGenericContextDecoder(InstantiationPatch patchInfo, IntPtr arg0, IntPtr arg1, IntPtr arg2, IntPtr arg3) {
+            MMDbgLog.Log("In dummy generic context decoder");
+
+            GenericDetourCoreCLRWinX64 self = (GenericDetourCoreCLRWinX64) patchInfo.OwningPatchInfo.DetourRuntime;
+
+            IntPtr genericCtxPtr = self.GetGenericContextPositionEnum(patchInfo.SourceInstantiation) switch {
+                GenericContextPosision.Arg1 => arg0,
+                GenericContextPosision.Arg2 => arg1,
+                GenericContextPosision.Arg3 => arg2,
+                _ => throw new InvalidOperationException()
+            };
+
+            return self.DecodeGenericContext(patchInfo, genericCtxPtr, arg0);
+        }
+
+        protected override NativeDetourData PatchInstantiation(InstantiationPatch patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
             if (!MethodIsGenericShared(methodInstance)) {
-                return PatchUnshared(methodInstance, codeStart, BuildInstantiationForMethod(patchInfo.TargetMethod, methodInstance));
+                return PatchUnshared(methodInstance, codeStart, BuildInstantiationForMethod(patchInfo.OwningPatchInfo.TargetMethod, methodInstance));
             }
 
             IntPtr thunk = GenericThunkLoc; //GetPrecallThunkForMethod(methodInstance);
@@ -1275,7 +1307,7 @@ jmp rax
             CallType callType = FindCallType(codeStart, thunk);
             uint callLen = GetCallTypeSize(callType);
 
-            IntPtr ctxDecoder = typeof(GenericDetourCoreCLRWinX64).GetMethod(nameof(DummyGenericContextDecoder), BindingFlags.NonPublic | BindingFlags.Static)
+            IntPtr ctxDecoder = typeof(GenericDetourCoreCLRWinX64).GetMethod(nameof(PrecallGenericContextDecoder), BindingFlags.NonPublic | BindingFlags.Static)
                 .Pin().GetNativeStart();
 
             // backup the original data

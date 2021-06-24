@@ -346,19 +346,20 @@ namespace MonoMod.RuntimeDetour.Platforms {
         }
 
         private void CreatePatchInstance(GenericPatchInfo patchInfo, MethodBase decl, MethodBase instance, IntPtr codeStart, int index) {
-            NativeDetourData detourData = PatchInstantiation(patchInfo, decl, instance, codeStart, index);
-            InstantiationPatch patch = new(instance, detourData);
-            InstantiationPatch? existing = null;
             lock (patchInfo) {
+                InstantiationPatch patch = new(patchInfo, instance);
+                InstantiationPatch existing = null;
                 if (patchInfo.PatchedInstantiations.TryGetValue(instance, out InstantiationPatch existingnn)) {
                     existing = existingnn;
                     patchInfo.PatchedInstantiations[instance] = patch;
                 } else {
                     patchInfo.PatchedInstantiations.Add(instance, patch);
                 }
-            }
-            if (existing != null) {
-                UnpatchInstantiation(existing.Value); // specifically do it *outside* the lock
+
+                if (existing != null) {
+                    UnpatchInstantiation(existing);
+                }
+                patch.OriginalData = PatchInstantiation(patch, decl, instance, codeStart, index);
             }
         }
 
@@ -388,7 +389,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             DetourHelper.Native.MemFree(data.Extra);
         }
 
-        protected abstract NativeDetourData PatchInstantiation(GenericPatchInfo patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index);
+        protected abstract NativeDetourData PatchInstantiation(InstantiationPatch patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index);
         protected abstract void UnpatchInstantiation(InstantiationPatch instantiation);
         private void UnpatchInstanceInternal(InstantiationPatch instantiation) {
             // we check the high bit of the patch type to figure out if this is our allocation
@@ -399,13 +400,14 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
-        public struct InstantiationPatch {
+        public class InstantiationPatch {
+            public readonly GenericPatchInfo OwningPatchInfo;
             public readonly MethodBase SourceInstantiation;
-            public readonly NativeDetourData OriginalData;
+            public NativeDetourData OriginalData;
 
-            public InstantiationPatch(MethodBase source, NativeDetourData origData) {
+            public InstantiationPatch(GenericPatchInfo gpi, MethodBase source) {
+                OwningPatchInfo = gpi;
                 SourceInstantiation = source;
-                OriginalData = origData;
             }
         }
 
@@ -677,6 +679,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         private static readonly MethodInfo GCHandle_FromIntPtr = typeof(GCHandle).GetMethod(nameof(GCHandle.FromIntPtr), BindingFlags.Public | BindingFlags.Static);
         private static readonly MethodInfo GCHandle_Target = typeof(GCHandle).GetProperty(nameof(GCHandle.Target), BindingFlags.Public | BindingFlags.Instance).GetGetMethod();
+        private static readonly FieldInfo InstantiationPatch_OwningPatchInfo = typeof(InstantiationPatch).GetField(nameof(InstantiationPatch.OwningPatchInfo));
         private static readonly FieldInfo GenericPatchInfo_DetourRuntime = typeof(GenericPatchInfo).GetField(nameof(GenericPatchInfo.DetourRuntime));
         private static readonly MethodInfo GenericDetourCoreCLR_PrecallBackpatch = typeof(GenericDetourCoreCLR).GetMethod(nameof(GenericPrecallDoFixup), BindingFlags.Public | BindingFlags.Instance);
 
@@ -706,7 +709,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
                     VariableDefinition patchCallTargetPtrPtr = new(intArg);
                     VariableDefinition gctxDecoderPtrPtr = new(intArg);
-                    VariableDefinition genericPatchInfo = new(module.ImportReference(typeof(GenericPatchInfo)));
+                    VariableDefinition genericPatchInfo = new(module.ImportReference(typeof(InstantiationPatch)));
                     VariableDefinition gcHandle = new(module.ImportReference(typeof(GCHandle)));
                     precallHelper.Body.Variables.AddRange(new[] { patchCallTargetPtrPtr, gctxDecoderPtrPtr, genericPatchInfo, gcHandle });
 
@@ -737,6 +740,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
                     // we'll start preparing to call into ourselves for the backpatch
                     il.Emit(OpCodes.Ldloc, genericPatchInfo);
+                    il.Emit(OpCodes.Ldfld, module.ImportReference(InstantiationPatch_OwningPatchInfo));
                     il.Emit(OpCodes.Ldfld, module.ImportReference(GenericPatchInfo_DetourRuntime));
 
                     il.Emit(OpCodes.Ldloc, genericPatchInfo);
@@ -794,7 +798,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
-        public unsafe IntPtr GenericPrecallDoFixup(GenericPatchInfo patchInfo, MethodBase instance, IntPtr* patchsiteData) {
+        public unsafe IntPtr GenericPrecallDoFixup(InstantiationPatch patchInfo, MethodBase instance, IntPtr* patchsiteData) {
             // patchsiteData has, in slot 0, the call target ptr, and in slot 1, the patchInfo GCHandle
 
             // TODO: actually do the precall fixup
@@ -813,10 +817,10 @@ namespace MonoMod.RuntimeDetour.Platforms {
         // The precall helper ABI is as follows:
         // - PlatThunkGetReturnTargetHelper must take no arguments and return a pointer to an array of 3 pointers:
         //   - 0: the pointer to the precall helper body. This will be updated by the precall helper to point to the final thunk.
-        //   - 1: a GCHandle pointer to the GenericPatchInfo for the method the precall helper is attempting to patch.
+        //   - 1: a GCHandle pointer to the InstantiationPatch for the method instantiation the precall helper is attempting to patch.
         //   - 2: a pointer to the appropriate generic context decoder for the method being patched.
         // - The generic context decoder in slot 2 returns the MethodBase for the generic instantiation, and takes the following parameters, in order:
-        //   - The GenericPatchInfo object for the method being patched
+        //   - The InstantiationPatch object for the method instance being patched
         //   - PlatMaxRegisterArgCount pointer or floating point arguments, most of which should be ignored, save the one which corresponds to the generic context.
 
         protected MethodInfo GetPrecallHelper(MethodBase srcMethod) {
@@ -935,7 +939,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return realType;
         }
 
-        private MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
+        protected MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
             Type realType = RealTypeFromThis(thisptr, patchInfo);
 
             // find the actual method impl using this whacky type handle workaround
@@ -946,18 +950,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        private MethodBase RealInstFromMD(IntPtr methodDesc) {
+        protected MethodBase RealInstFromMD(IntPtr methodDesc) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             return MethodBase.GetMethodFromHandle(handle);
         }
 
-        private MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
+        protected MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             Type realType = RealTypeFromThis(thisptr, patchInfo);
             return MethodBase.GetMethodFromHandle(handle, realType.TypeHandle);
         }
 
-        private MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
+        protected MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
 
             Type realType = netPlatform.GetTypeFromNativeHandle(methodTable);
