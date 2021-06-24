@@ -15,6 +15,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 #endif
     class GenericDetourCoreCLRWinX64 : GenericDetourCoreCLR {
 
+#if false
         // for all of the precall thunks, the initial detour jump will be a call instruction
         // immediately following that instruction will be the pointer to the correct handling method
         // immediately following that pointer will be a 32 bit index to determine the hook target (index into list?)
@@ -38,9 +39,9 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         // it seems our thunks *require* us to set up stack frames correctly, and allocate at least enough space for the parameters to call the handlers
 
-        #region Thunk definitions
+#region Thunk definitions
 
-        #region call_p1
+#region call_p1
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -115,8 +116,8 @@ jmp [r10]
             0x4C, 0x8B, 0x55, 0xD8, 0x48, 0x8D, 0x65, 0x00,
             0x5D, 0x4D, 0x8B, 0x5A, 0x08, 0x41, 0xFF, 0x22,
         };
-        #endregion
-        #region call_p2
+#endregion
+#region call_p2
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -191,8 +192,8 @@ jmp [r10]
             0x48, 0x8D, 0x65, 0x00, 0x5D, 0x4D, 0x8B, 0x5A,
             0x08, 0x41, 0xFF, 0x22,
         };
-        #endregion
-        #region call_p2t
+#endregion
+#region call_p2t
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -272,8 +273,8 @@ jmp [r10]
             0x8B, 0x55, 0xD8, 0x48, 0x8D, 0x65, 0x00, 0x5D,
             0x4D, 0x8B, 0x5A, 0x08, 0x41, 0xFF, 0x22,
         };
-        #endregion
-        #region call_p3
+#endregion
+#region call_p3
         /*
 ; after the call instruction is this:
 ; 8[context converter ptr]
@@ -350,8 +351,8 @@ jmp [r10]
             0x08, 0x41, 0xFF, 0x22,
         };
 
-        #endregion
-        #region cc g g
+#endregion
+#region cc g g
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -371,8 +372,8 @@ jmp r11
         private static readonly byte[] cconv_g_g = {
             0x48, 0x89, 0xC1, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region cc rg rg
+#endregion
+#region cc rg rg
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -392,8 +393,8 @@ jmp r11
         private static readonly byte[] cconv_rg_rg = {
             0x48, 0x89, 0xC2, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region cc t g
+#endregion
+#region cc t g
         /*
 ; the thunk data must have the following data
 ; * a pointer to the context conversion
@@ -478,8 +479,8 @@ jmp r11 ; call the actual target
             0xF2, 0x0F, 0x10, 0xD1, 0xF2, 0x0F, 0x10, 0xC8,
             0x48, 0x89, 0xC1, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region cc tg g
+#endregion
+#region cc tg g
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -500,8 +501,8 @@ jmp r11
         private static readonly byte[] cconv_tg_g = {
             0x48, 0x89, 0xCA, 0x48, 0x89, 0xC1, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region cc tr rg
+#endregion
+#region cc tr rg
         /*
 ; calling this thunk means that you must have, immediately following the call instruction,
 ; * a pointer to the context conversion
@@ -585,8 +586,8 @@ jmp r11 ; call the actual target
             0x10, 0xDA, 0x49, 0x89, 0xC8, 0x48, 0x89, 0xD1,
             0x48, 0x89, 0xC2, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region cc trg rg
+#endregion
+#region cc trg rg
         /*
 ; at this point we have int he argument registers, the appropriate arguments
 ; in rax, our new generic context
@@ -609,8 +610,8 @@ jmp r11
             0x49, 0x89, 0xC8, 0x48, 0x89, 0xD1, 0x48, 0x89,
             0xC2, 0x41, 0xFF, 0xE3,
         };
-        #endregion
-        #region pre1
+#endregion
+#region pre1
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -676,8 +677,8 @@ jmp rax
             0xF0, 0x4C, 0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D,
             0xE0, 0x48, 0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
-        #endregion
-        #region pre2
+#endregion
+#region pre2
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -745,8 +746,8 @@ jmp rax
             0x4C, 0x8B, 0x4D, 0xE0, 0x48, 0x8D, 0x65, 0x00,
             0x5D, 0xFF, 0xE0,
         };
-        #endregion
-        #region pre2t
+#endregion
+#region pre2t
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -818,8 +819,8 @@ jmp rax
             0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
             0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
-        #endregion
-        #region pre3
+#endregion
+#region pre3
         /*
 pop r10 ; r10 isn't used to pass arguments on Windows; it now contains the return position
 
@@ -890,9 +891,9 @@ jmp rax
             0x8B, 0x45, 0xE8, 0x4C, 0x8B, 0x4D, 0xE0, 0x48,
             0x8D, 0x65, 0x00, 0x5D, 0xFF, 0xE0,
         };
-        #endregion
+#endregion
 
-        #region jmp block
+#region jmp block
         private static readonly byte[] jmp_long = {
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
@@ -903,11 +904,11 @@ jmp rax
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,
         };
-        #endregion
+#endregion
 
-        #endregion
+#endregion
 
-        #region Thunk executable segment
+#region Thunk executable segment
         private struct ConstThunkMemory {
             public IntPtr MemStart;
 
@@ -1100,7 +1101,8 @@ jmp rax
         ~GenericDetourCoreCLRWinX64() {
             FreeThunkMemory(thunkMemory);
         }
-        #endregion
+#endregion
+#endif
 
         private static unsafe void Copy(byte* from, byte* to, uint length) {
             for (uint i = 0; i < length / 4; i++) {
@@ -1149,8 +1151,12 @@ jmp rax
                 + 8u // decoder ptr
                 + 8u; // call abs address
 
+        // TODO: move as much of this out to CoreCLR shared as possible
         private enum GenericContextPosision {
             Arg1, Arg2, Arg3
+        }
+        private enum GenericContextKind {
+            This, MethodDesc, MethodTable, ThisMethodDesc
         }
 
         protected override int PlatMaxRegisterArgCount => 4;
@@ -1238,6 +1244,7 @@ jmp rax
             return GenericContextPosision.Arg1;
         }
 
+        /*
         private IntPtr GetPrecallThunkForMethod(MethodBase instance)
             => GetGenericContextPositionEnum(instance) switch {
                 GenericContextPosision.Arg1 => thunkMemory.Pre1,
@@ -1245,18 +1252,19 @@ jmp rax
                 GenericContextPosision.Arg3 => thunkMemory.Pre3,
                 _ => throw new InvalidOperationException()
             };
+        */
 
-        private IntPtr GetPrecallHandlerForMethod(MethodBase instance) {
+        private GenericContextKind GetGenericContextKind(MethodBase instance) {
             if (TakesGenericsFromThis(instance))
-                return FixupForThisPtrContext;
+                return GenericContextKind.This;
             if (RequiresMethodTableArg(instance))
-                return FixupForMethodTableContext;
+                return GenericContextKind.MethodTable;
             if (RequiresMethodDescArg(instance)) {
                 return instance.IsStatic
-                    ? FixupForMethodDescContext
-                    : FixupForMethodDescThisContext;
+                    ? GenericContextKind.MethodDesc
+                    : GenericContextKind.ThisMethodDesc;
             }
-            return UnknownMethodABI;
+            throw new ArgumentException($"Unknown generic ABI for method {instance}", nameof(instance));
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
@@ -1268,18 +1276,14 @@ jmp rax
             return ((delegate*<IntPtr, object>) (delegate*<IntPtr, IntPtr>) &ObjectForPtrImpl)(ptr);
         }
 
-        private MethodBase DecodeGenericContext(InstantiationPatch patchInfo, IntPtr context, IntPtr firstArg) {
-            if (TakesGenericsFromThis(patchInfo.SourceInstantiation))
-                return RealInstFromThis(ObjectForPtr(context), patchInfo.OwningPatchInfo);
-            if (RequiresMethodTableArg(patchInfo.SourceInstantiation))
-                return RealInstFromMT(context, patchInfo.OwningPatchInfo);
-            if (RequiresMethodDescArg(patchInfo.SourceInstantiation)) {
-                return patchInfo.SourceInstantiation.IsStatic
-                    ? RealInstFromMD(context)
-                    : RealInstFromMDT(ObjectForPtr(firstArg), context, patchInfo.OwningPatchInfo);
-            }
-            throw new InvalidOperationException("Unknown generic ABI");
-        }
+        private MethodBase DecodeGenericContext(InstantiationPatch patchInfo, IntPtr context, IntPtr firstArg)
+            => GetGenericContextKind(patchInfo.SourceInstantiation) switch {
+                GenericContextKind.This => RealInstFromThis(ObjectForPtr(context), patchInfo.OwningPatchInfo),
+                GenericContextKind.MethodTable => RealInstFromMT(context, patchInfo.OwningPatchInfo),
+                GenericContextKind.MethodDesc => RealInstFromMD(context),
+                GenericContextKind.ThisMethodDesc => RealInstFromMDT(ObjectForPtr(firstArg), context, patchInfo.OwningPatchInfo),
+                _ => throw new NotImplementedException()
+            };
 
         [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
         private static MethodBase PrecallGenericContextDecoder(InstantiationPatch patchInfo, IntPtr arg0, IntPtr arg1, IntPtr arg2, IntPtr arg3) {
@@ -1375,6 +1379,7 @@ jmp rax
             8 + // context decoder
             8;  // the real call target, if its an absolute call
 
+#if false
         private IntPtr GetCallThunkForMethod(MethodBase srcMethod, MethodBase target) {
             if (TakesGenericsFromThis(srcMethod)) {
                 if (RequiresMethodDescArg(target)) {
@@ -1507,6 +1512,7 @@ jmp rax
             DetourHelper.Native.MakeExecutable(detourData);
             DetourHelper.Native.FlushICache(detourData);
         }
+#endif
 
         private unsafe IntPtr GetSharedMethodBody(MethodBase method) {
             IntPtr methodDesc = method.MethodHandle.Value;
@@ -1540,6 +1546,10 @@ jmp rax
             MethodBase sharedInstance = MethodBase.GetMethodFromHandle(netPlatform.CreateHandleForHandlePointer(sharedMd));
 
             return sharedInstance.GetNativeStart();
+        }
+
+        protected override unsafe void PatchMethodInst(InstantiationPatch patch, MethodBase realSrc, IntPtr* patchsiteData) {
+            throw new NotImplementedException();
         }
     }
 }

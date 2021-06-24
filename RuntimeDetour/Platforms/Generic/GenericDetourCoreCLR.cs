@@ -153,6 +153,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     ? ctx
                     : (ctx = GetMethodOnSelf(memberName).GetNativeStart());
 
+#if false
         #region Thunk Jump Targets
 
         private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
@@ -309,14 +310,15 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return Instance.ConvertMDT2MDCached(thisptr, ctx, index);
         }
         #endregion
+#endif
 
-        private static GenericDetourCoreCLR Instance;
+        //private static GenericDetourCoreCLR Instance;
 
         // we currently use stuff from this type, and this should only be running when this is the current anyway
         protected readonly DetourRuntimeNETCore30Platform netPlatform;
 
         protected GenericDetourCoreCLR() {
-            Instance = this;
+            //Instance = this;
             netPlatform = (DetourRuntimeNETCore30Platform) DetourHelper.Runtime;
             netPlatform.OnMethodCompiled += OnMethodCompiled;
         }
@@ -633,7 +635,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
-        #region Real Target Locators
+#if false
+#region Real Target Locators
         protected void PatchInstanceForThisPtrContxt(object thisptr, int index, IntPtr realCodeStart) {
             GenericPatchInfo patchInfo = GetPatchInfoFromIndex(index);
 
@@ -665,7 +668,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
             PatchMethodInst(patchInfo, realMethod, realCodeStart);
         }
-        #endregion
+#endregion
+#endif
         
         // the maximum number of registers that may be used as arguments in the calling convention
         protected abstract int PlatMaxRegisterArgCount { get; }
@@ -683,18 +687,29 @@ namespace MonoMod.RuntimeDetour.Platforms {
         private static readonly FieldInfo GenericPatchInfo_DetourRuntime = typeof(GenericPatchInfo).GetField(nameof(GenericPatchInfo.DetourRuntime));
         private static readonly MethodInfo GenericDetourCoreCLR_PrecallBackpatch = typeof(GenericDetourCoreCLR).GetMethod(nameof(GenericPrecallDoFixup), BindingFlags.Public | BindingFlags.Instance);
 
-        private MethodInfo CreatePrecallHelper(ulong floatRegisterPattern) {
+        private MethodInfo CreateStaticMethod(string typeName, Func<ModuleDefinition, MethodDefinition> createMethod) {
             const string Namespace = "MonoMod.RuntimeDetour.Platforms.Generic";
-            const string TypeName = "Precall";
-            using (ModuleDefinition module = ModuleDefinition.CreateModule($"{Namespace}.{TypeName}<{floatRegisterPattern:X16}>", ModuleKind.Dll)) {
-                TypeDefinition containingType = new(Namespace, TypeName, CTypeAttributes.Public | CTypeAttributes.Abstract | CTypeAttributes.Sealed); // public static class
+            using (ModuleDefinition module = ModuleDefinition.CreateModule($"{Namespace}.{typeName}", ModuleKind.Dll)) {
+                TypeDefinition containingType = new(Namespace, typeName, CTypeAttributes.Public | CTypeAttributes.Abstract | CTypeAttributes.Sealed); // public static class
                 containingType.BaseType = module.ImportReference(typeof(object));
 
+                MethodDefinition method = createMethod(module);
+
+                containingType.Methods.Add(method);
+                module.Types.Add(containingType);
+
+                Assembly helperAssembly = ReflectionHelper.Load(module);
+                return helperAssembly.GetType(containingType.FullName, true).GetMethod(method.Name);
+            }
+        }
+
+        private MethodInfo CreatePrecallHelper(ulong floatRegisterPattern)
+            => CreateStaticMethod($"Precall<{floatRegisterPattern:X16}>", module => {
                 TypeReference intArg = module.ImportReference(typeof(IntPtr));
                 TypeReference floatArg = module.ImportReference(typeof(double)); // I don't think there's a platform without native double support that CoreCLR targets
 
-                MethodDefinition precallHelper = new("Helper", 
-                    CMethodAttributes.Public | CMethodAttributes.Static, 
+                MethodDefinition precallHelper = new("Helper",
+                    CMethodAttributes.Public | CMethodAttributes.Static,
                     ((floatRegisterPattern >> PlatMaxRegisterArgCount) & 0x1) == 0 ? intArg : floatArg); // check the last bit of the register pattern for return type floatiness
                 precallHelper.ImplAttributes = CMethodImplAttributes.IL | CMethodImplAttributes.NoInlining | (CMethodImplAttributes) 512; // flag it for aggressive optimization
 
@@ -788,15 +803,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     il.Emit(OpCodes.Ret);
                 }
 
-                containingType.Methods.Add(precallHelper);
-                module.Types.Add(containingType);
-
-                //module.Write($"{TypeName}{floatRegisterPattern:X16}.dll");
-
-                Assembly helperAssembly = ReflectionHelper.Load(module);
-                return helperAssembly.GetType(containingType.FullName, true).GetMethod(precallHelper.Name);
-            }
-        }
+                return precallHelper;
+            });
 
         public unsafe IntPtr GenericPrecallDoFixup(InstantiationPatch patchInfo, MethodBase instance, IntPtr* patchsiteData) {
             // patchsiteData has, in slot 0, the call target ptr, and in slot 1, the patchInfo GCHandle
@@ -827,9 +835,9 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return GetOrCreatePrecallHelper(GetFloatRegisterPattern(srcMethod));
         }
 
-        protected abstract void PatchMethodInst(GenericPatchInfo patch, MethodBase realSrc, IntPtr realCodeStart);
+        protected abstract unsafe void PatchMethodInst(InstantiationPatch patch, MethodBase realSrc, IntPtr* patchsiteData);
 
-        #region Actual Conversions
+#region Actual Conversions
         private class IntPtrWrapper {
             public IntPtr Value = IntPtr.Zero;
         }
@@ -918,9 +926,9 @@ namespace MonoMod.RuntimeDetour.Platforms {
             MethodBase target = GetTargetInstantiation(patchInfo, realSrc);
             return RealTargetToMD(target);
         }
-        #endregion
+#endregion
 
-        #region Instantiation Lookup
+#region Instantiation Lookup
         private Type RealTypeFromThis(object thisptr, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
             Type origType = origSrc.DeclaringType;
@@ -981,7 +989,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         private IntPtr RealTargetToMT(MethodBase method) {
             return method.DeclaringType.TypeHandle.Value;
         }
-        #endregion
+#endregion
 
         protected virtual MethodBase GetTargetInstantiation(GenericPatchInfo patch, MethodBase realSrc) {
             return BuildInstantiationForMethod(patch.TargetMethod, realSrc);
