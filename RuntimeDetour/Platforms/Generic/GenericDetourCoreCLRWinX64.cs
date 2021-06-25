@@ -1,4 +1,6 @@
 ﻿#if !NET35
+using Mono.Cecil;
+using Mono.Cecil.Cil;
 using MonoMod.RuntimeDetour;
 using MonoMod.Utils;
 using System;
@@ -1217,15 +1219,6 @@ jmp rax
         }
 
 
-        protected override int GetGenericContextPosition(MethodBase method) {
-            return GetGenericContextPositionEnum(method) switch {
-                GenericContextPosision.Arg1 => 0,
-                GenericContextPosision.Arg2 => 1,
-                GenericContextPosision.Arg3 => 2,
-                _ => throw new InvalidOperationException()
-            };
-        }
-
         private GenericContextPosision GetGenericContextPositionEnum(MethodBase instance) {
             if (TakesGenericsFromThis(instance)) {
                 // if we take generics from the this parameter, grab the first given arg
@@ -1548,7 +1541,15 @@ jmp rax
             return sharedInstance.GetNativeStart();
         }
 
-        protected override unsafe void PatchMethodInst(InstantiationPatch patch, MethodBase realSrc, IntPtr* patchsiteData) {
+        protected override MethodInfo GetCallHelperFor(InstantiationPatch patch) {
+            throw new NotImplementedException();
+        }
+
+        protected override IntPtr GetTargetBody(InstantiationPatch patch, MethodBase realSrc) {
+            throw new NotImplementedException();
+        }
+
+        protected override Mono.Cecil.CallSite EmitArgumentFixupForCall(ModuleDefinition module, MethodDefinition method, ILProcessor il, VariableDefinition instantiationPatchVar, ulong floatRegPattern, int kind) {
             throw new NotImplementedException();
         }
     }
