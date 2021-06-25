@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using CCallSite = Mono.Cecil.CallSite;
 
 namespace MonoMod.RuntimeDetour.Platforms {
 #if !MONOMOD_INTERNAL
@@ -1507,7 +1508,7 @@ jmp rax
         }
 #endif
 
-        private unsafe IntPtr GetSharedMethodBody(MethodBase method) {
+        protected override unsafe IntPtr GetSharedMethodBody(MethodBase method) {
             IntPtr methodDesc = method.MethodHandle.Value;
 
             const int offsToWrappedMd =
@@ -1541,15 +1542,35 @@ jmp rax
             return sharedInstance.GetNativeStart();
         }
 
-        protected override MethodInfo GetCallHelperFor(InstantiationPatch patch) {
-            throw new NotImplementedException();
+        private byte EncodeMethodGenericABI(MethodBase method)
+            => EncodeMethodGenericABI(GetGenericContextPositionEnum(method), GetGenericContextKind(method));
+        private static byte EncodeMethodGenericABI(GenericContextPosision pos, GenericContextKind kind)
+            => (byte)((((byte)pos) & 0x3) | ((((byte)kind) & 0x3) << 2));
+        private static void DecodeMethodGenericABI(byte data, out GenericContextPosision pos, out GenericContextKind kind) {
+            pos = (GenericContextPosision) (data & 0x3);
+            kind = (GenericContextKind) ((data >> 2) & 0x3);
         }
 
-        protected override IntPtr GetTargetBody(InstantiationPatch patch, MethodBase realSrc) {
-            throw new NotImplementedException();
+        protected override MethodInfo GetCallHelperFor(InstantiationPatch patch, MethodBase realSrc, MethodBase realTarget) {
+            int kind = EncodeMethodGenericABI(realSrc) | (EncodeMethodGenericABI(realTarget) << 4);
+            return GetCallHelper(realSrc, kind);
         }
 
-        protected override Mono.Cecil.CallSite EmitArgumentFixupForCall(ModuleDefinition module, MethodDefinition method, ILProcessor il, VariableDefinition instantiationPatchVar, ulong floatRegPattern, int kind) {
+
+        protected override CCallSite EmitArgumentFixupForCall(
+            ModuleDefinition module, MethodDefinition method, ILProcessor il,
+            VariableDefinition instantiationPatchVar, ulong floatRegPattern, int kind) {
+            // we need to:
+            // 1. decode the generic context (based on kind)
+            // 2. reconstruct a generic context for the target method (based on kind)
+            // 3. load and reorder arguments such that they are in the correct places for the finall call
+            // 4. build and return a CCallSite for the final call
+
+            DecodeMethodGenericABI((byte) (kind & 0xf), out GenericContextPosision srcCtxPos, out GenericContextKind srcCtxKind);
+            DecodeMethodGenericABI((byte) ((kind >> 4) & 0xf), out GenericContextPosision dstCtxPos, out GenericContextKind dstCtxKind);
+
+
+            // TODO: implement
             throw new NotImplementedException();
         }
     }

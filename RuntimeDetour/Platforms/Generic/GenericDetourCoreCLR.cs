@@ -833,12 +833,13 @@ namespace MonoMod.RuntimeDetour.Platforms {
         public unsafe IntPtr GenericPrecallDoFixup(InstantiationPatch patchInfo, MethodBase instance, IntPtr* patchsiteData) {
             // patchsiteData has, in slot 0, the call target ptr, and in slot 1, the patchInfo GCHandle
 
-            IntPtr callHelper = GetCallHelperFor(patchInfo).Pin().GetNativeStart();
-            IntPtr methodTargetBody = GetTargetBody(patchInfo, instance);
+            MethodBase targetMethod = BuildInstantiationForMethod(patchInfo.OwningPatchInfo.TargetMethod, instance);
+            IntPtr callHelper = GetCallHelperFor(patchInfo, instance, targetMethod).Pin().GetNativeStart();
+            IntPtr targetMethodBody = GetSharedMethodBody(targetMethod);
 
             DetourHelper.Native.MakeWritable((IntPtr) patchsiteData, (uint)IntPtr.Size * 3);
             patchsiteData[0] = callHelper; // set the call helper target
-            patchsiteData[2] = methodTargetBody; // set the target body
+            patchsiteData[2] = targetMethodBody; // set the target body
             // the patchsiteData is in an executable block, so we want to make sure we restore its permissions correctly
             DetourHelper.Native.MakeExecutable((IntPtr) patchsiteData, (uint) IntPtr.Size * 3);
 
@@ -849,10 +850,9 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return patchInfo.OriginalData.Method;
         }
 
-        protected abstract MethodInfo GetCallHelperFor(InstantiationPatch patch);
+        protected abstract IntPtr GetSharedMethodBody(MethodBase method);
 
-        // Returns the address of the body of the target instantiation
-        protected abstract IntPtr GetTargetBody(InstantiationPatch patch, MethodBase realSrc);
+        protected abstract MethodInfo GetCallHelperFor(InstantiationPatch patch, MethodBase realSrc, MethodBase realTarget);
 
         #region Call helpers
         private struct CallHelperCacheKey : IEquatable<CallHelperCacheKey> {
