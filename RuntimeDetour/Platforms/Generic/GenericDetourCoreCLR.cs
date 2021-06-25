@@ -148,12 +148,13 @@ namespace MonoMod.RuntimeDetour.Platforms {
             => typeof(GenericDetourCoreCLR)
                         .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
 
+#if false
+
         private static IntPtr GetPtrForCtx(ref IntPtr ctx, string memberName)
             => ctx != IntPtr.Zero
                     ? ctx
                     : (ctx = GetMethodOnSelf(memberName).GetNativeStart());
 
-#if false
         #region Thunk Jump Targets
 
         private static IntPtr fixupForThisPtrCtx = IntPtr.Zero;
@@ -715,10 +716,10 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         private static readonly MethodInfo GCHandle_FromIntPtr = typeof(GCHandle).GetMethod(nameof(GCHandle.FromIntPtr), BindingFlags.Public | BindingFlags.Static);
         private static readonly MethodInfo GCHandle_Target = typeof(GCHandle).GetProperty(nameof(GCHandle.Target), BindingFlags.Public | BindingFlags.Instance).GetGetMethod();
+        protected static readonly FieldInfo InstantiationPatch_OwningPatchInfo = typeof(InstantiationPatch).GetField(nameof(InstantiationPatch.OwningPatchInfo));
+        protected static readonly FieldInfo GenericPatchInfo_DetourRuntime = typeof(GenericPatchInfo).GetField(nameof(GenericPatchInfo.DetourRuntime));
 
         #region Precall helpers
-        private static readonly FieldInfo InstantiationPatch_OwningPatchInfo = typeof(InstantiationPatch).GetField(nameof(InstantiationPatch.OwningPatchInfo));
-        private static readonly FieldInfo GenericPatchInfo_DetourRuntime = typeof(GenericPatchInfo).GetField(nameof(GenericPatchInfo.DetourRuntime));
         private static readonly MethodInfo GenericDetourCoreCLR_PrecallBackpatch = typeof(GenericDetourCoreCLR).GetMethod(nameof(GenericPrecallDoFixup), BindingFlags.Public | BindingFlags.Instance);
 
         private MethodInfo CreatePrecallHelper(ulong floatRegisterPattern)
@@ -1039,7 +1040,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 #endif
 
         #region Instantiation Lookup
-        private Type RealTypeFromThis(object thisptr, GenericPatchInfo patchInfo) {
+        private static Type RealTypeFromThis(object thisptr, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
             Type origType = origSrc.DeclaringType;
             Type realType = thisptr.GetType();
@@ -1057,7 +1058,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return realType;
         }
 
-        protected MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
+        protected static MethodBase RealInstFromThis(object thisptr, GenericPatchInfo patchInfo) {
             Type realType = RealTypeFromThis(thisptr, patchInfo);
 
             // find the actual method impl using this whacky type handle workaround
@@ -1068,18 +1069,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected MethodBase RealInstFromMD(IntPtr methodDesc) {
+        protected static MethodBase RealInstFromMD(IntPtr methodDesc) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             return MethodBase.GetMethodFromHandle(handle);
         }
 
-        protected MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
+        protected static MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             Type realType = RealTypeFromThis(thisptr, patchInfo);
             return MethodBase.GetMethodFromHandle(handle, realType.TypeHandle);
         }
 
-        protected MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
+        protected static MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
 
             Type realType = netPlatform.GetTypeFromNativeHandle(methodTable);
@@ -1092,11 +1093,11 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected IntPtr RealTargetToMD(MethodBase method) {
+        protected static IntPtr RealTargetToMD(MethodBase method) {
             return method.MethodHandle.Value;
         }
 
-        protected IntPtr RealTargetToMT(MethodBase method) {
+        protected static IntPtr RealTargetToMT(MethodBase method) {
             return method.DeclaringType.TypeHandle.Value;
         }
 #endregion

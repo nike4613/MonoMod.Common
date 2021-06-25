@@ -1155,7 +1155,7 @@ jmp rax
                 + 8u; // call abs address
 
         // TODO: move as much of this out to CoreCLR shared as possible
-        private enum GenericContextPosision {
+        private enum GenericContextPosition {
             Arg1, Arg2, Arg3
         }
         private enum GenericContextKind {
@@ -1220,22 +1220,22 @@ jmp rax
         }
 
 
-        private GenericContextPosision GetGenericContextPositionEnum(MethodBase instance) {
+        private GenericContextPosition GetGenericContextPosition(MethodBase instance) {
             if (TakesGenericsFromThis(instance)) {
                 // if we take generics from the this parameter, grab the first given arg
-                return GenericContextPosision.Arg1;
+                return GenericContextPosition.Arg1;
             }
             bool needsReturnBuffer = MethodRequiresReturnBuffer(instance);
             if (!instance.IsStatic ^ needsReturnBuffer) {
                 // currently we assume that there there is never a return buffer, so always return the thunk assuming that
                 // if it takes a this arg OR has a return buffer BUT NOT BOTH, grab the second given arg
-                return GenericContextPosision.Arg2;
+                return GenericContextPosition.Arg2;
             } else if (!instance.IsStatic && needsReturnBuffer) {
                 // if it takes a this arg AND has a return buffer, grab the third given arg
-                return GenericContextPosision.Arg3;
+                return GenericContextPosition.Arg3;
             }
             // otherwise the context is in the first given arg
-            return GenericContextPosision.Arg1;
+            return GenericContextPosition.Arg1;
         }
 
         /*
@@ -1248,7 +1248,7 @@ jmp rax
             };
         */
 
-        private GenericContextKind GetGenericContextKind(MethodBase instance) {
+        private static GenericContextKind GetGenericContextKind(MethodBase instance) {
             if (TakesGenericsFromThis(instance))
                 return GenericContextKind.This;
             if (RequiresMethodTableArg(instance))
@@ -1270,29 +1270,36 @@ jmp rax
             return ((delegate*<IntPtr, object>) (delegate*<IntPtr, IntPtr>) &ObjectForPtrImpl)(ptr);
         }
 
-        private MethodBase DecodeGenericContext(InstantiationPatch patchInfo, IntPtr context, IntPtr firstArg)
+        public static MethodBase DecodeContextFromThis(InstantiationPatch patchInfo, IntPtr context)
+            => RealInstFromThis(ObjectForPtr(context), patchInfo.OwningPatchInfo);
+        public static MethodBase DecodeContextFromMethodTable(InstantiationPatch patchInfo, IntPtr context)
+            => RealInstFromMT(context, patchInfo.OwningPatchInfo);
+        public static MethodBase DecodeContextFromMethodDesc(IntPtr context)
+            => RealInstFromMD(context);
+        public static MethodBase DecodeContextFromThisMethodDesc(InstantiationPatch patchInfo, IntPtr context, IntPtr thisarg)
+            => RealInstFromMDT(ObjectForPtr(thisarg), context, patchInfo.OwningPatchInfo);
+
+        private static MethodBase DecodeGenericContext(InstantiationPatch patchInfo, IntPtr context, IntPtr firstArg)
             => GetGenericContextKind(patchInfo.SourceInstantiation) switch {
-                GenericContextKind.This => RealInstFromThis(ObjectForPtr(context), patchInfo.OwningPatchInfo),
-                GenericContextKind.MethodTable => RealInstFromMT(context, patchInfo.OwningPatchInfo),
-                GenericContextKind.MethodDesc => RealInstFromMD(context),
-                GenericContextKind.ThisMethodDesc => RealInstFromMDT(ObjectForPtr(firstArg), context, patchInfo.OwningPatchInfo),
+                GenericContextKind.This => DecodeContextFromThis(patchInfo, context),
+                GenericContextKind.MethodTable => DecodeContextFromMethodTable(patchInfo, context),
+                GenericContextKind.MethodDesc => DecodeContextFromMethodDesc(context),
+                GenericContextKind.ThisMethodDesc => DecodeContextFromThisMethodDesc(patchInfo, context, firstArg),
                 _ => throw new NotImplementedException()
             };
 
         [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
         private static MethodBase PrecallGenericContextDecoder(InstantiationPatch patchInfo, IntPtr arg0, IntPtr arg1, IntPtr arg2, IntPtr arg3) {
-            MMDbgLog.Log("In dummy generic context decoder");
-
             GenericDetourCoreCLRWinX64 self = (GenericDetourCoreCLRWinX64) patchInfo.OwningPatchInfo.DetourRuntime;
 
-            IntPtr genericCtxPtr = self.GetGenericContextPositionEnum(patchInfo.SourceInstantiation) switch {
-                GenericContextPosision.Arg1 => arg0,
-                GenericContextPosision.Arg2 => arg1,
-                GenericContextPosision.Arg3 => arg2,
+            IntPtr genericCtxPtr = self.GetGenericContextPosition(patchInfo.SourceInstantiation) switch {
+                GenericContextPosition.Arg1 => arg0,
+                GenericContextPosition.Arg2 => arg1,
+                GenericContextPosition.Arg3 => arg2,
                 _ => throw new InvalidOperationException()
             };
 
-            return self.DecodeGenericContext(patchInfo, genericCtxPtr, arg0);
+            return DecodeGenericContext(patchInfo, genericCtxPtr, arg0);
         }
 
         protected override NativeDetourData PatchInstantiation(InstantiationPatch patchInfo, MethodBase orig, MethodBase methodInstance, IntPtr codeStart, int index) {
@@ -1543,12 +1550,11 @@ jmp rax
         }
 
         private byte EncodeMethodGenericABI(MethodBase method)
-            => EncodeMethodGenericABI(GetGenericContextPositionEnum(method), GetGenericContextKind(method));
-        private static byte EncodeMethodGenericABI(GenericContextPosision pos, GenericContextKind kind)
+            => EncodeMethodGenericABI(GetGenericContextPosition(method), GetGenericContextKind(method));
+        private static byte EncodeMethodGenericABI(GenericContextPosition pos, GenericContextKind kind)
             => (byte)((((byte)pos) & 0x3) | ((((byte)kind) & 0x3) << 2));
-        private static void DecodeMethodGenericABI(byte data, out GenericContextPosision pos, out GenericContextKind kind) {
-            pos = (GenericContextPosision) (data & 0x3);
-            kind = (GenericContextKind) ((data >> 2) & 0x3);
+        private static GenericContextInfo DecodeMethodGenericABI(byte data) {
+            return new((GenericContextPosition) (data & 0x3), (GenericContextKind) ((data >> 2) & 0x3));
         }
 
         protected override MethodInfo GetCallHelperFor(InstantiationPatch patch, MethodBase realSrc, MethodBase realTarget) {
@@ -1556,6 +1562,44 @@ jmp rax
             return GetCallHelper(realSrc, kind);
         }
 
+        private static void ValidateCtxPositionKind(GenericContextInfo info) {
+            switch (info.Kind) {
+                case GenericContextKind.This:
+                    if (info.Position is not GenericContextPosition.Arg1)
+                        throw new InvalidOperationException("A generic context kind of This must be in position 1");
+                    break;
+                case GenericContextKind.MethodTable:
+                    break; // a MethodTable can be in any position I believe
+                case GenericContextKind.MethodDesc:
+                    if (info.Position is not GenericContextPosition.Arg1 or GenericContextPosition.Arg2)
+                        throw new InvalidOperationException("A generic context kind of MethodDesc must be in position 1 or 2");
+                    break;
+                case GenericContextKind.ThisMethodDesc:
+                    if (info.Position is not GenericContextPosition.Arg2 or GenericContextPosition.Arg3)
+                        throw new InvalidOperationException("A generic context kind of ThisMethodDesc must be in position 2 or 3");
+                    break;
+                default:
+                    throw new NotImplementedException();
+            }
+        }
+
+        private struct GenericContextInfo {
+            public readonly GenericContextPosition Position;
+            public readonly GenericContextKind Kind;
+            public GenericContextInfo(GenericContextPosition pos, GenericContextKind kind) {
+                Position = pos;
+                Kind = kind;
+            }
+        }
+
+        private struct GenericContextInfoPair {
+            public readonly GenericContextInfo Src;
+            public readonly GenericContextInfo Dst;
+            public GenericContextInfoPair(GenericContextInfo src, GenericContextInfo dst) {
+                Src = src;
+                Dst = dst;
+            }
+        }
 
         protected override CCallSite EmitArgumentFixupForCall(
             ModuleDefinition module, MethodDefinition method, ILProcessor il,
@@ -1566,13 +1610,45 @@ jmp rax
             // 3. load and reorder arguments such that they are in the correct places for the finall call
             // 4. build and return a CCallSite for the final call
 
-            DecodeMethodGenericABI((byte) (kind & 0xf), out GenericContextPosision srcCtxPos, out GenericContextKind srcCtxKind);
-            DecodeMethodGenericABI((byte) ((kind >> 4) & 0xf), out GenericContextPosision dstCtxPos, out GenericContextKind dstCtxKind);
+            GenericContextInfo srcInfo = DecodeMethodGenericABI((byte) (kind & 0xf));
+            GenericContextInfo dstInfo = DecodeMethodGenericABI((byte) ((kind >> 4) & 0xf));
 
+            // these are just sanity checks
+            ValidateCtxPositionKind(srcInfo);
+            ValidateCtxPositionKind(dstInfo);
+
+            if (dstInfo.Kind is GenericContextKind.MethodTable or GenericContextKind.This or GenericContextKind.ThisMethodDesc)
+                throw new InvalidOperationException("Destination context kind is not supported");
+
+            // first we want to decode the generic context
+            // TODO:
+
+            // then we build up the new generic context
+            // TODO:
+
+            // and finally, we load all our arguments in the appropriate order
+            // TODO:
+            switch (new GenericContextInfoPair(srcInfo, dstInfo)) {
+                case { Src: { Kind: GenericContextKind.This }, Dst: { Kind: GenericContextKind.MethodDesc } }: {
+
+                    }
+                    break;
+
+                default: throw new NotImplementedException();
+            }
 
             // TODO: implement
             throw new NotImplementedException();
         }
+
+        private static MethodBase GetMethodOnSelf(string name)
+            => typeof(GenericDetourCoreCLRWinX64)
+                        .GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static readonly MethodBase DecodeFromThisMeth = GetMethodOnSelf(nameof(DecodeContextFromThis));
+        private static readonly MethodBase DecodeFromMethodTableMeth = GetMethodOnSelf(nameof(DecodeContextFromMethodTable));
+        private static readonly MethodBase DecodeFromMethodDescMeth = GetMethodOnSelf(nameof(DecodeContextFromMethodDesc));
+        private static readonly MethodBase DecodeFromThisMethodDescMeth = GetMethodOnSelf(nameof(DecodeContextFromThisMethodDesc));
     }
 }
 #endif
