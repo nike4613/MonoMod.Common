@@ -1707,7 +1707,8 @@ jmp rax
 
             // there is now a MethodBase for the real instantiation on the stack
 
-            // TODO: don't be stupid and actually fix the context to be the right thing
+            il.Emit(OpCodes.Ldloc, instantiationPatchVar); // load the instantiation patch to convert the method
+            il.Emit(OpCodes.Call, module.ImportReference(FindRealTargetMeth));
 
             // then we build up the new generic context
             il.Emit(OpCodes.Call, module.ImportReference(dstInfo.Kind switch {
@@ -1821,6 +1822,11 @@ jmp rax
         private static readonly MethodInfo DecodeFromMethodTableMeth = GetMethodOnSelf(nameof(DecodeContextFromMethodTable));
         private static readonly MethodInfo DecodeFromMethodDescMeth = GetMethodOnSelf(nameof(DecodeContextFromMethodDesc));
         private static readonly MethodInfo DecodeFromThisMethodDescMeth = GetMethodOnSelf(nameof(DecodeContextFromThisMethodDesc));
+
+        private static MethodInfo FindRealTargetMeth = GetMethodOnSelf(nameof(FindRealTarget));
+
+        public static MethodBase FindRealTarget(MethodBase source, InstantiationPatch patchInfo)
+            => ((GenericDetourCoreCLRWinX64) patchInfo.OwningPatchInfo.DetourRuntime).BuildInstantiationForMethod(patchInfo.OwningPatchInfo.TargetMethod, source);
 
         private static readonly MethodInfo RealTargetToMethodDescProxyMeth = GetMethodOnSelf(nameof(RealTargetToMethodDescProxy));
 

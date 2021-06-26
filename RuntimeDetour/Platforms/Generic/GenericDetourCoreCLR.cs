@@ -691,7 +691,13 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 containingType.Methods.Add(method);
                 module.Types.Add(containingType);
 
-                module.Write($"{typeName.Replace('<', '_').Replace('>', '_')}.dll");
+#if DEBUG
+                string filename = $"{typeName.Replace('<', '_').Replace('>', '_')}.dll";
+                if (System.IO.File.Exists(filename)) {
+                    System.IO.File.Delete(filename);
+                }
+                module.Write(filename);
+#endif
 
                 Assembly helperAssembly = ReflectionHelper.Load(module);
                 return helperAssembly.GetType(containingType.FullName, true).GetMethod(method.Name);
