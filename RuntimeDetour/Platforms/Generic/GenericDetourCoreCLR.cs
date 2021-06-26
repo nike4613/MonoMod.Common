@@ -691,6 +691,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 containingType.Methods.Add(method);
                 module.Types.Add(containingType);
 
+                module.Write($"{typeName.Replace('<', '_').Replace('>', '_')}.dll");
+
                 Assembly helperAssembly = ReflectionHelper.Load(module);
                 return helperAssembly.GetType(containingType.FullName, true).GetMethod(method.Name);
             }
@@ -874,7 +876,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         }
 
         private MethodInfo CreateCallHelper(CallHelperCacheKey cacheKey)
-            => CreateStaticMethod($"Call<{cacheKey.FloatPattern:X16},{cacheKey.Kind}>", module => {
+            => CreateStaticMethod($"Call<{cacheKey.FloatPattern:X16}-{cacheKey.Kind}>", module => {
                 MethodDefinition callHelper = CreateCallOrPrecallHelperBase(module, cacheKey.FloatPattern);
                 ILProcessor il = callHelper.Body.GetILProcessor();
 
@@ -911,7 +913,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 // stack is empty here
 
                 // do argument fixups
-                CCallSite finalCallSite = EmitArgumentFixupForCall(module, callHelper, il, genericPatchInfo, cacheKey.FloatPattern, cacheKey.Kind);
+                CCallSite finalCallSite = EmitArgumentFixupForCall(module, callHelper, il, genericPatchInfo, callTarget, cacheKey.FloatPattern, cacheKey.Kind);
 
                 // by this point, the stack should be set up for our final call, minus the actual method pointer
                 // so lets load the method pointer
@@ -942,8 +944,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         //   When control leaves code emitted by this method, the stack must contain all arguments, in their new order,
         // as required by the returned CCallSite.
-        protected abstract CCallSite EmitArgumentFixupForCall(ModuleDefinition module, MethodDefinition method, ILProcessor il, 
-            VariableDefinition instantiationPatchVar, ulong floatRegPattern, int kind);
+        protected abstract CCallSite EmitArgumentFixupForCall(ModuleDefinition module, MethodDefinition method, ILProcessor il,
+            VariableDefinition instantiationPatchVar, VariableDefinition jumpTargetVar, ulong floatRegPattern, int kind);
         #endregion
 
 #if false
@@ -1069,18 +1071,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected static MethodBase RealInstFromMD(IntPtr methodDesc) {
+        protected MethodBase RealInstFromMD(IntPtr methodDesc) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             return MethodBase.GetMethodFromHandle(handle);
         }
 
-        protected static MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
+        protected MethodBase RealInstFromMDT(object thisptr, IntPtr methodDesc, GenericPatchInfo patchInfo) {
             RuntimeMethodHandle handle = netPlatform.CreateHandleForHandlePointer(methodDesc);
             Type realType = RealTypeFromThis(thisptr, patchInfo);
             return MethodBase.GetMethodFromHandle(handle, realType.TypeHandle);
         }
 
-        protected static MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
+        protected MethodBase RealInstFromMT(IntPtr methodTable, GenericPatchInfo patchInfo) {
             MethodBase origSrc = patchInfo.SourceMethod;
 
             Type realType = netPlatform.GetTypeFromNativeHandle(methodTable);
@@ -1093,11 +1095,14 @@ namespace MonoMod.RuntimeDetour.Platforms {
             return MethodBase.GetMethodFromHandle(origHandle, realTypeHandle);
         }
 
-        protected static IntPtr RealTargetToMD(MethodBase method) {
+        protected static readonly MethodBase RealTargetToMethodDescMeth = GetMethodOnSelf(nameof(RealTargetToMethodDesc));
+        protected static readonly MethodBase RealTargetToMethodTableMeth = GetMethodOnSelf(nameof(RealTargetToMethodTable));
+
+        public static IntPtr RealTargetToMethodDesc(MethodBase method) {
             return method.MethodHandle.Value;
         }
 
-        protected static IntPtr RealTargetToMT(MethodBase method) {
+        public static IntPtr RealTargetToMethodTable(MethodBase method) {
             return method.DeclaringType.TypeHandle.Value;
         }
 #endregion
