@@ -1608,9 +1608,7 @@ jmp rax
                 case GenericContextKind.MethodTable:
                     break; // a MethodTable can be in any position I believe
                 case GenericContextKind.MethodDesc:
-                    if (info.Position is not GenericContextPosition.Arg1 or GenericContextPosition.Arg2)
-                        throw new InvalidOperationException("A generic context kind of MethodDesc must be in position 1 or 2");
-                    break;
+                    break; // a MethodDesc can be in any position I believe
                 case GenericContextKind.ThisMethodDesc:
                     if (info.Position is not GenericContextPosition.Arg2 or GenericContextPosition.Arg3)
                         throw new InvalidOperationException("A generic context kind of ThisMethodDesc must be in position 2 or 3");
@@ -1627,6 +1625,7 @@ jmp rax
                 Position = pos;
                 Kind = kind;
             }
+            public override string ToString() => $"{Position}:{Kind}";
         }
 
         private struct GenericContextInfoPair {
@@ -1636,6 +1635,7 @@ jmp rax
                 Src = src;
                 Dst = dst;
             }
+            public override string ToString() => $"{Src}->{Dst}";
         }
 
         private static int GetGenericContextPositionIndex(GenericContextPosition pos)
@@ -1648,6 +1648,15 @@ jmp rax
 
         private static bool NeedsStackSpill(MethodBase src, GenericContextInfo srcInfo, MethodBase dst, GenericContextInfo dstInfo) {
             switch (new GenericContextInfoPair(srcInfo, dstInfo)) {
+                case { Src: { Kind: GenericContextKind.MethodDesc }, Dst: { Kind: GenericContextKind.MethodDesc } }:
+                    // a MD->MD always has the same number of arguments, only reordering is needed
+                    return false;
+                case { Src: { Kind: GenericContextKind.MethodTable }, Dst: { Kind: GenericContextKind.MethodDesc } }:
+                    // a MT->MD always has the same number of arguments, only reordering is needed
+                    return false;
+                case { Src: { Kind: GenericContextKind.ThisMethodDesc }, Dst: { Kind: GenericContextKind.MethodDesc } }:
+                    // a MDT->MD always has the same number of arguments, only reordering is needed
+                    return false;
                 case { Src: { Kind: GenericContextKind.This }, Dst: { Kind: GenericContextKind.MethodDesc } }:
                     if (dstInfo.Position is GenericContextPosition.Arg1) {
                         // no return buffer, conversion is
@@ -1663,8 +1672,8 @@ jmp rax
                         throw new InvalidOperationException("Somehow got inconsistent information");
                     }
 
-                default:
-                    throw new NotImplementedException();
+                case GenericContextInfoPair p:
+                    throw new NotImplementedException(p.ToString());
             }
         }
 
@@ -1727,7 +1736,64 @@ jmp rax
 
             // and finally, we load all our arguments in the appropriate order
             switch (new GenericContextInfoPair(srcInfo, dstInfo)) {
-                case { Src: { Kind: GenericContextKind.This }, Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 } }: {
+                #region Transforms, no return buffer
+                case // MD->MD static source no return buffer
+                {
+                    Src: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 }
+                }:
+                case // MT->MD static source no return buffer
+                {
+                    Src: { Kind: GenericContextKind.MethodTable, Position: GenericContextPosition.Arg1 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 }
+                }: {
+                        // this is the following transformation:
+                        //   g x y z
+                        //   g x y z
+
+                        CCallSite callSite = new(method.ReturnType);
+                        // load gctx
+                        callSite.Parameters.Add(new(realGCtx.VariableType));
+                        il.Emit(OpCodes.Ldloc, realGCtx);
+                        // then all remaining arguments
+                        foreach (ParameterDefinition param in method.Parameters.Skip(1)) {
+                            callSite.Parameters.Add(new(param.ParameterType));
+                            il.Emit(OpCodes.Ldarg, param);
+                        }
+
+                        // we never have to deal with stack spillage, so we're done
+                        return callSite;
+                    }
+                case // MDT->MD no return buffer
+                {
+                    Src: { Kind: GenericContextKind.ThisMethodDesc, Position: GenericContextPosition.Arg2 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 }
+                }: {
+                        // this is the following transformation:
+                        //   t g x y
+                        //   g t x y
+
+                        CCallSite callSite = new(method.ReturnType);
+                        // load gctx
+                        callSite.Parameters.Add(new(realGCtx.VariableType));
+                        il.Emit(OpCodes.Ldloc, realGCtx);
+                        // then load the this ptr
+                        callSite.Parameters.Add(new(method.Parameters.First().ParameterType));
+                        il.Emit(OpCodes.Ldarg, method.Parameters.First());
+                        // then load everything else
+                        foreach (ParameterDefinition param in method.Parameters.Skip(2)) {
+                            callSite.Parameters.Add(new(param.ParameterType));
+                            il.Emit(OpCodes.Ldarg, param);
+                        }
+
+                        // we never have to deal with stack spillage, so we're done
+                        return callSite;
+                    }
+                case // T->MD no return buffer
+                {
+                    Src: { Kind: GenericContextKind.This },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg1 }
+                }: {
                         // transform from This to MethodDesc with no return buffer (because Dst.Position is Arg1)
                         // this is the following transformation:
                         //   t x y z
@@ -1765,10 +1831,94 @@ jmp rax
                         // and we're done
                         return callSite;
                     }
+                #endregion
+                #region Transforms, return buffers
+                case // MD->MD static source return buffer
+                {
+                    Src: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg2 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg2 }
+                }:
+                case // MT->MD static source return buffer
+                {
+                    Src: { Kind: GenericContextKind.MethodTable, Position: GenericContextPosition.Arg2 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg2 }
+                }: {
+                        // this is the following transformation:
+                        //   r g x y
+                        //   r g x y
+
+                        CCallSite callSite = new(method.ReturnType);
+                        // load return buffer
+                        callSite.Parameters.Add(new(method.Parameters.First().ParameterType));
+                        il.Emit(OpCodes.Ldarg, callSite.Parameters.First());
+                        // load gctx
+                        callSite.Parameters.Add(new(realGCtx.VariableType));
+                        il.Emit(OpCodes.Ldloc, realGCtx);
+                        // then all remaining arguments
+                        foreach (ParameterDefinition param in method.Parameters.Skip(2)) {
+                            callSite.Parameters.Add(new(param.ParameterType));
+                            il.Emit(OpCodes.Ldarg, param);
+                        }
+
+                        // we never have to deal with stack spillage, so we're done
+                        return callSite;
+                    }
+                case // T->MD return buffer
+                {
+                    Src: { Kind: GenericContextKind.This },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg2 }
+                }: {
+                        // transform from This to MethodDesc with return buffer (because Dst.Position is Arg2)
+                        // this is the following transformation:
+                        //   t r x y
+                        //   r g t x y
+
+                        CCallSite callSite = new(method.ReturnType);
+                        // first is our return buffer
+                        ParameterDefinition rbParam = method.Parameters.Skip(1).First();
+                        callSite.Parameters.Add(new(rbParam.ParameterType));
+                        il.Emit(OpCodes.Ldarg, rbParam);
+                        // then our generic context
+                        callSite.Parameters.Add(new(realGCtx.VariableType));
+                        il.Emit(OpCodes.Ldloc, realGCtx);
+                        // then our this pointer
+                        callSite.Parameters.Add(new(method.Parameters.First().ParameterType));
+                        il.Emit(OpCodes.Ldarg, method.Parameters.First());
+                        // then is the rest of the arguments
+                        foreach (ParameterDefinition param in method.Parameters.Skip(2)) {
+                            callSite.Parameters.Add(new(param.ParameterType));
+                            il.Emit(OpCodes.Ldarg, param);
+                        }
+
+                        // TODO: pull out this common stack spill logic
+
+                        TypeReference lastParamType = callSite.Parameters.Last().ParameterType;
+                        callSite.Parameters.RemoveAt(callSite.Parameters.Count - 1);
+
+                        // if we might stack spill, pull the last param into a helper with the given jump target
+                        //   and switch to using our special helper jump target
+                        if (hasStackSpill) {
+                            il.Emit(OpCodes.Ldloc, jumpTargetVar);
+                            il.Emit(OpCodes.Call, module.ImportReference(
+                                lastParamType.Name == nameof(IntPtr) // switch on whether or not this param is a ptr or not
+                                    ? StackSpillStoreHelperPtrMeth
+                                    : throw new NotImplementedException()));
+                            il.Emit(OpCodes.Ldc_I8, (long) StackSpillCallHelperPtrPtr);
+                            il.Emit(OpCodes.Conv_I);
+                            il.Emit(OpCodes.Stloc, jumpTargetVar);
+                        } else {
+                            // remove the extra argument on stack
+                            il.Emit(OpCodes.Pop);
+                        }
+
+                        // and we're done
+                        return callSite;
+                    }
+                #endregion
 
                 // TODO: implement more transformations
 
-                default: throw new NotImplementedException();
+                case GenericContextInfoPair p: throw new NotImplementedException(p.ToString());
             }
 
             // TODO: implement
