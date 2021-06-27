@@ -738,7 +738,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             _ = ReadyAssemblyHelperMethod(method, 7, body => {
                 int offs = 0;
                 body.Write(ref offs, 0x49ca8949);
-                body.Write(ref offs, (ushort) 0xde89);
+                body.Write(ref offs, (ushort) 0xd389);
                 body.Write(ref offs, (byte) 0xc3);
                 // { 49, 89, ca, 49, 89, d3, c3 } = mov r10,rcx ; mov r11,rdx ; ret
             });
