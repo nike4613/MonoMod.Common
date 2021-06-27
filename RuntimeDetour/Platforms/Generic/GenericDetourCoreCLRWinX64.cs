@@ -386,7 +386,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 case GenericContextKind.MethodDesc:
                     break; // a MethodDesc can be in any position I believe
                 case GenericContextKind.ThisMethodDesc:
-                    if (info.Position is not GenericContextPosition.Arg2 or GenericContextPosition.Arg3)
+                    if (info.Position is not GenericContextPosition.Arg2 and not GenericContextPosition.Arg3)
                         throw new InvalidOperationException("A generic context kind of ThisMethodDesc must be in position 2 or 3");
                     break;
                 default:
@@ -632,6 +632,35 @@ namespace MonoMod.RuntimeDetour.Platforms {
                         il.Emit(OpCodes.Ldloc, realGCtx);
                         // then all remaining arguments
                         foreach (ParameterDefinition param in method.Parameters.Skip(2)) {
+                            callSite.Parameters.Add(new(param.ParameterType));
+                            il.Emit(OpCodes.Ldarg, param);
+                        }
+
+                        // we never have to deal with stack spillage, so we're done
+                        return callSite;
+                    }
+                case // MDT->MD no return buffer
+                {
+                    Src: { Kind: GenericContextKind.ThisMethodDesc, Position: GenericContextPosition.Arg3 },
+                    Dst: { Kind: GenericContextKind.MethodDesc, Position: GenericContextPosition.Arg2 }
+                }: {
+                        // this is the following transformation:
+                        //   t r g x y
+                        //   r g t x y
+
+                        CCallSite callSite = new(method.ReturnType);
+                        // load return buffer
+                        ParameterDefinition rbParam = method.Parameters.Skip(1).First();
+                        callSite.Parameters.Add(new(rbParam.ParameterType));
+                        il.Emit(OpCodes.Ldarg, rbParam);
+                        // then load gctx
+                        callSite.Parameters.Add(new(realGCtx.VariableType));
+                        il.Emit(OpCodes.Ldloc, realGCtx);
+                        // then load the this ptr
+                        callSite.Parameters.Add(new(method.Parameters.First().ParameterType));
+                        il.Emit(OpCodes.Ldarg, method.Parameters.First());
+                        // then load everything else
+                        foreach (ParameterDefinition param in method.Parameters.Skip(3)) {
                             callSite.Parameters.Add(new(param.ParameterType));
                             il.Emit(OpCodes.Ldarg, param);
                         }
