@@ -453,6 +453,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
             }
         }
 
+        private static readonly MethodInfo MethodBase_GetParameters = typeof(MethodBase).GetMethod(nameof(MethodBase.GetParameters), BindingFlags.Public | BindingFlags.Instance);
+
         protected override CCallSite EmitArgumentFixupForCall(
             ModuleDefinition module, MethodDefinition method, ILProcessor il, VariableDefinition instantiationPatchVar,
             VariableDefinition jumpTargetVar, ulong floatRegPattern, int kind) {
@@ -492,6 +494,13 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
             // there is now a MethodBase for the real instantiation on the stack
 
+            VariableDefinition meth = new(module.ImportReference(typeof(MethodBase)));
+            method.Body.Variables.Add(meth);
+            if (hasStackSpill) { // if we can stack spill, we want to save the method
+                il.Emit(OpCodes.Stloc, meth);
+                il.Emit(OpCodes.Ldloc, meth);
+            }
+
             il.Emit(OpCodes.Ldloc, instantiationPatchVar); // load the instantiation patch to convert the method
             il.Emit(OpCodes.Call, module.ImportReference(FindRealTargetMeth));
 
@@ -509,6 +518,27 @@ namespace MonoMod.RuntimeDetour.Platforms {
             il.Emit(OpCodes.Stloc, realGCtx);
 
             // the stack is once again empty
+
+            void EmitStackSpill(TypeReference lastParamType, Action<ILProcessor> emitLoadArgCount) {
+                // if we might stack spill, pull the last param into a helper with the given jump target
+                //   and switch to using our special helper jump target
+                if (hasStackSpill) {
+                    il.Emit(OpCodes.Ldloc, jumpTargetVar);
+
+                    emitLoadArgCount(il);
+
+                    il.Emit(OpCodes.Call, module.ImportReference(
+                        lastParamType.Name == nameof(IntPtr) // switch on whether or not this param is a ptr or not
+                            ? StackSpillStoreHelperPtrMeth
+                            : throw new NotImplementedException()));
+                    il.Emit(OpCodes.Ldc_I8, (long) StackSpillCallHelperPtrPtr);
+                    il.Emit(OpCodes.Conv_I);
+                    il.Emit(OpCodes.Stloc, jumpTargetVar);
+                } else {
+                    // remove the extra argument on stack
+                    il.Emit(OpCodes.Pop);
+                }
+            }
 
             // and finally, we load all our arguments in the appropriate order
             switch (new GenericContextInfoPair(srcInfo, dstInfo)) {
@@ -588,21 +618,17 @@ namespace MonoMod.RuntimeDetour.Platforms {
                         TypeReference lastParamType = callSite.Parameters.Last().ParameterType;
                         callSite.Parameters.RemoveAt(callSite.Parameters.Count - 1);
 
-                        // if we might stack spill, pull the last param into a helper with the given jump target
-                        //   and switch to using our special helper jump target
-                        if (hasStackSpill) {
-                            il.Emit(OpCodes.Ldloc, jumpTargetVar);
-                            il.Emit(OpCodes.Call, module.ImportReference(
-                                lastParamType.Name == nameof(IntPtr) // switch on whether or not this param is a ptr or not
-                                    ? StackSpillStoreHelperPtrMeth
-                                    : throw new NotImplementedException()));
-                            il.Emit(OpCodes.Ldc_I8, (long)StackSpillCallHelperPtrPtr);
-                            il.Emit(OpCodes.Conv_I);
-                            il.Emit(OpCodes.Stloc, jumpTargetVar);
-                        } else {
-                            // remove the extra argument on stack
-                            il.Emit(OpCodes.Pop);
-                        }
+                        EmitStackSpill(lastParamType, il => {
+                            // load the real argument count of the source
+                            il.Emit(OpCodes.Ldloc, meth);
+                            il.Emit(OpCodes.Callvirt, module.ImportReference(MethodBase_GetParameters));
+                            il.Emit(OpCodes.Ldlen);
+                            // now the parameter array length is on the stack
+                            // this kind of method always has one more argument than the list
+                            il.Emit(OpCodes.Ldc_I4_1);
+                            il.Emit(OpCodes.Add);
+                            il.Emit(OpCodes.Conv_U);
+                        });
 
                         // and we're done
                         return callSite;
@@ -695,26 +721,20 @@ namespace MonoMod.RuntimeDetour.Platforms {
                             il.Emit(OpCodes.Ldarg, param);
                         }
 
-                        // TODO: pull out this common stack spill logic
-
                         TypeReference lastParamType = callSite.Parameters.Last().ParameterType;
                         callSite.Parameters.RemoveAt(callSite.Parameters.Count - 1);
 
-                        // if we might stack spill, pull the last param into a helper with the given jump target
-                        //   and switch to using our special helper jump target
-                        if (hasStackSpill) {
-                            il.Emit(OpCodes.Ldloc, jumpTargetVar);
-                            il.Emit(OpCodes.Call, module.ImportReference(
-                                lastParamType.Name == nameof(IntPtr) // switch on whether or not this param is a ptr or not
-                                    ? StackSpillStoreHelperPtrMeth
-                                    : throw new NotImplementedException()));
-                            il.Emit(OpCodes.Ldc_I8, (long) StackSpillCallHelperPtrPtr);
-                            il.Emit(OpCodes.Conv_I);
-                            il.Emit(OpCodes.Stloc, jumpTargetVar);
-                        } else {
-                            // remove the extra argument on stack
-                            il.Emit(OpCodes.Pop);
-                        }
+                        EmitStackSpill(lastParamType, il => {
+                            // load the real argument count of the source
+                            il.Emit(OpCodes.Ldloc, meth);
+                            il.Emit(OpCodes.Callvirt, module.ImportReference(MethodBase_GetParameters));
+                            il.Emit(OpCodes.Ldlen);
+                            // now the parameter array length is on the stack
+                            // this kind of method always has one more argument than the list
+                            il.Emit(OpCodes.Ldc_I4_2);
+                            il.Emit(OpCodes.Add);
+                            il.Emit(OpCodes.Conv_U);
+                        });
 
                         // and we're done
                         return callSite;
@@ -735,36 +755,144 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         private MethodInfo MakeStackSpillStoreHelperPtr() {
             MethodInfo method = GetMethodOnSelf(nameof(StackSpillStoreHelperPtr));
-            _ = ReadyAssemblyHelperMethod(method, 7, body => {
+            _ = ReadyAssemblyHelperMethod(method, 12, body => {
                 int offs = 0;
                 body.Write(ref offs, 0x49ca8949);
-                body.Write(ref offs, (ushort) 0xd389);
-                body.Write(ref offs, (byte) 0xc3);
-                // { 49, 89, ca, 49, 89, d3, c3 } = mov r10,rcx ; mov r11,rdx ; ret
+                body.Write(ref offs, 0x4966d389);
+                body.Write(ref offs, 0xc3c06e0f);
+                // { 49 89 ca 49 89 d3 66 49 0f 6e c0 c3 } = mov r10,rcx ; mov r11,rdx ; movq xmm0, r8 ; ret
             });
             return method;
         }
 
         // We make this a method so that it is more likely that a given detoured generic method is within Rel32 range of this thunk, allowing us to make smaller patchsites
         [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
-        public static void StackSpillStoreHelperPtr(IntPtr value, IntPtr jmpTarget) {
+        public static void StackSpillStoreHelperPtr(IntPtr value, IntPtr jmpTarget, nuint argCount) {
             throw new InvalidOperationException("This should never execute");
         }
 
-        private IntPtr stackSpillCallHelperPtrPtr = IntPtr.Zero;
-        private IntPtr StackSpillCallHelperPtrPtr => GetOrMakePtr(ref stackSpillCallHelperPtrPtr, () =>
-            ReadyAssemblyHelperMethod(GetMethodOnSelf(nameof(StackSpillCallHelperPtr)), 7, body => {
-                int offs = 0;
-                body.Write(ref offs, 0x50524158);
-                body.Write(ref offs, (ushort) 0xff41);
-                body.Write(ref offs, (byte) 0xe3);
-                // { 58, 41, 52, 50, 41, ff, e3 } = pop rax ; push r10 ; push rax ; jmp r11
-            }));
+        // The assembly source is in this #if false block (NASM syntax)
+#if false
+bits 64
+default rel
 
-        // We make this a method so that it is more likely that a given detoured generic method is within Rel32 range of this thunk, allowing us to make smaller patchsites
-        [MethodImpl(MethodImplOptions.NoInlining | (MethodImplOptions) 512)]
-        private static void StackSpillCallHelperPtr(IntPtr value, IntPtr jmpTarget) {
-            throw new InvalidOperationException("This should never execute");
+; r10 contins the value to insert
+; r11 contains the actual jump target
+
+; at this point the top of the stack is the return address, then a number of arguments
+
+; what we need to do here is
+;   1. move all arguments on stack down 1 slot
+;   2. move the first 4 arguments on stack down 1 more slot
+;   3. insert the value in r10 into the extra slot inbetween
+;   4. call over to r11 such that when we return further rsp is in the correct place
+; the only registers we can use without saving/restoring:
+;   rax
+;   r10 - used to get the argument to insert
+;   r11 - used to get the real jump target
+;   x/ymm0 - used to get the number of extra arguments
+;   x/ymm4/5
+; all other registers must be saved and restored if we use them
+
+; stach looks like this (high addresses on top; each entry is a qword):
+;   argN
+;   ...
+;   arg4
+;   arg3 (in register also)
+;   arg2 (in register also)
+;   arg1 (in register also)
+;   arg0 (in register also)
+;   retAddr
+; we want it to be this:
+;   ext2
+;   ext1
+;   ext0
+;   argN
+;   ...
+;   arg4
+;   arg3.5
+;   arg3 (in register also)
+;   arg2 (in register also)
+;   arg1 (in register also)
+;   arg0 (in register also)
+;   retAddr
+
+; load the return address in rax
+pop rax
+; move first 4 arguments down 4 stack slots to make room
+; those arguments are already in-register, so we don't need to move necessarily
+; write new argument in appropriate location
+mov [rsp], r10
+sub rsp, 4*8 ; update rsp
+
+; now lets save some registers to the bottom 4 stack slots which we have available to us
+mov [rsp], rcx ; this is the correct place for it
+mov [rsp + 8], rsi ; this is supposed to be rdx, but we need to use rsi
+mov [rsp + 8*2], rdi ; this is supposed to be r8, but wee need to use rdi
+
+; we can now use rcx, rsi, rdi, and rax, as long as we restore them later
+movq rcx, xmm0 ; load our source argument count
+sub rcx, 4 ; get our stack argument count
+lea rsi, [rsp + 8*(4+4)] ; 4 arguments + 4 old slots
+lea rdi, [rsp + 8*(4+1)] ; 4 arguments + 1 new arg
+rep movsq ; copy rest of the arguments
+
+; write real jump target and argument count above arguments, along with the base pointer to make our lives margincally easier
+movq rcx, xmm0 ; reload argument count
+add rcx, 1 ; get our target argument count
+mov [rsp + 8 * (rcx)], rax ; save real return address
+mov [rsp + 8 * (rcx + 1)], r12 ; save r12
+lea r12, [rsp + 8 * (rcx)] ; update r12 so that we can access it in the future
+
+; reload saved registers
+mov rcx, [rsp]
+mov rsi, [rsp + 8]
+mov rdi, [rsp + 8*2]
+; save their actual values
+mov [rsp + 8], rdx
+mov [rsp + 8*2], r8
+mov [rsp + 8*3], r9
+
+; now we should be good for the call
+call r11
+
+; at this point we have to return the stack to a reasonable state *without* touching rax
+; all other volatile registers are fair game
+
+mov r10, [r12] ; load real return address
+mov r12, [r12 + 8] ; load real r12
+add rsp, 4*8 ; fix stack pointer
+
+jmp r10
+#endif
+        private static readonly byte[] stackSpillCallHelperImpl = {
+            0x58, 0x4C, 0x89, 0x14, 0x24, 0x48, 0x83, 0xEC,
+            0x20, 0x48, 0x89, 0x0C, 0x24, 0x48, 0x89, 0x74,
+            0x24, 0x08, 0x48, 0x89, 0x7C, 0x24, 0x10, 0x66,
+            0x48, 0x0F, 0x7E, 0xC1, 0x48, 0x83, 0xE9, 0x04,
+            0x48, 0x8D, 0x74, 0x24, 0x40, 0x48, 0x8D, 0x7C,
+            0x24, 0x28, 0xF3, 0x48, 0xA5, 0x66, 0x48, 0x0F,
+            0x7E, 0xC1, 0x48, 0x83, 0xC1, 0x01, 0x48, 0x89,
+            0x04, 0xCC, 0x4C, 0x89, 0x64, 0xCC, 0x08, 0x4C,
+            0x8D, 0x24, 0xCC, 0x48, 0x8B, 0x0C, 0x24, 0x48,
+            0x8B, 0x74, 0x24, 0x08, 0x48, 0x8B, 0x7C, 0x24,
+            0x10, 0x48, 0x89, 0x54, 0x24, 0x08, 0x4C, 0x89,
+            0x44, 0x24, 0x10, 0x4C, 0x89, 0x4C, 0x24, 0x18,
+            0x41, 0xFF, 0xD3, 0x4D, 0x8B, 0x14, 0x24, 0x4D,
+            0x8B, 0x64, 0x24, 0x08, 0x48, 0x83, 0xC4, 0x20,
+            0x41, 0xFF, 0xE2,
+        };
+
+        private IntPtr stackSpillCallHelperPtrPtr = IntPtr.Zero;
+        private unsafe IntPtr StackSpillCallHelperPtrPtr => GetOrMakePtr(ref stackSpillCallHelperPtrPtr, () => CreateAssemblyHelper(stackSpillCallHelperImpl));
+
+        private static unsafe IntPtr CreateAssemblyHelper(byte[] body) {
+            IntPtr alloc = DetourHelper.Native.MemAlloc((uint) body.LongLength);
+            fixed (byte* ptr = body) {
+                Copy(ptr, (byte*) alloc, (uint) body.LongLength);
+            }
+            DetourHelper.Native.MakeExecutable(alloc, (uint) body.LongLength);
+            return alloc;
         }
 
         // TODO: add variants of the above for float arguments
