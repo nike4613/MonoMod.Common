@@ -771,6 +771,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
             throw new InvalidOperationException("This should never execute");
         }
 
+        // TODO: make this work with stack unwinding (bite the bullet and just generate a call helper for each arg count when stack spilling?)
+
         // The assembly source is in this #if false block (NASM syntax)
 #if false
 bits 64
